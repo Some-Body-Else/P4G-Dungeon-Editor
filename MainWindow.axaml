@@ -1,0 +1,118 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="720" d:DesignHeight="480"
+        x:Class="DungeonBuilder.MainWindow"
+        Title="DungeonBuilder"
+		Width="720"
+		Height="480"
+		MinWidth="720"
+		MinHeight="480"
+		MaxWidth="720"
+		MaxHeight="480"
+		Icon="/Assets/icon.ico">
+
+	<Window.Styles>
+		<Style Selector="RadioButton.FullButton" >
+			<Setter Property="FontSize" Value="14"/>
+			<Setter Property="BorderBrush" Value="Black"/>
+			<Setter Property="BorderThickness" Value="1"/>
+			<Setter Property="Margin" Value="0 2 0 2"/>
+			<Setter Property="Background" Value="#FFFFFF"></Setter>
+			<Setter Property="HorizontalContentAlignment" Value="Center"/>
+			<Setter Property="VerticalContentAlignment" Value="Center"/>
+			<Setter Property="Width" Value="140"/>
+			<Setter Property="Height" Value="40"/>
+			<Setter Property="Template">
+				<Setter.Value>
+					<ControlTemplate>
+						<Border
+						  Height="{TemplateBinding Height}"
+						  CornerRadius="{TemplateBinding CornerRadius}"
+						  Width="{TemplateBinding Width}"
+						  BorderThickness="{TemplateBinding BorderThickness}"
+						  Background="{TemplateBinding Background}"
+						  BorderBrush="{TemplateBinding BorderBrush}">
+							<ContentPresenter
+							  Name="PART_ContentPresenter"
+							  Margin="{TemplateBinding Padding}"
+							  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+							  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+							  Content="{TemplateBinding Content}"
+							  ContentTemplate="{TemplateBinding ContentTemplate}"
+							  RecognizesAccessKey="True" />
+						</Border>
+					</ControlTemplate>
+				</Setter.Value>
+			</Setter>
+		</Style>
+		<Style Selector="RadioButton.FullButton:pointerover">
+			<Setter Property="Background" Value="#FDE818"></Setter>
+		</Style>
+		<Style Selector="RadioButton.FullButton:checked">
+			<Setter Property="Background" Value="#FCCC10"></Setter>
+		</Style>
+	</Window.Styles>
+
+
+	<DockPanel>
+		<Menu Name="OptionsMenu" DockPanel.Dock="Top" Background="#C08030">
+			<MenuItem Header="_Project">
+				<MenuItem Name="NewProjectButton" Header="_Create New Project" Click="HandleProjectMenuItemClick"></MenuItem>
+				<MenuItem Name="LoadProjectButton" Header="_Load Project"  Click="HandleProjectMenuItemClick"></MenuItem>
+				<Separator></Separator>
+				<MenuItem Name="SaveProjectButton" Header="_Save Project"  Click="HandleProjectMenuItemClick" IsEnabled="False"></MenuItem>
+
+			</MenuItem>
+		</Menu>
+
+		<Grid Name="MainGrid">
+			<Grid.ColumnDefinitions>
+				<ColumnDefinition Width="148"></ColumnDefinition>
+				<ColumnDefinition Width="*"></ColumnDefinition>
+			</Grid.ColumnDefinitions>
+
+			<ScrollViewer Grid.Column="0">
+				<StackPanel Background="#FFF921">
+
+					<RadioButton Name="EncounterButton" Content="Encounters" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="0"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="EncounterTableButton" Content="Encounter Tables" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="1"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="LootTableButton" Content="Loot Tables" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="2"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="RoomModelButton" Content="Room Models" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="3" IsEnabled="False"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="RoomDataButton" Content="Room Data" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="4"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="FloorButton" Content="Floors" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="5"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+					<RadioButton Name="TemplateButton" Content="Templates" HorizontalAlignment="Stretch"
+								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="6"
+								 Click="HandleAreaRadioButtonClick"></RadioButton>
+				</StackPanel>
+			</ScrollViewer>
+			
+			<Grid Name="ActiveGrid" Grid.Column="1"  Background="#404040">
+				<TextBlock VerticalAlignment="Center" HorizontalAlignment="Center">
+					Create a new project or load one, then select a window.
+				</TextBlock>
+			</Grid>
+		</Grid>
+	</DockPanel>
+
+
+</Window>
