@@ -13,7 +13,10 @@ Page List:
 + [Startup](#startup)
 + [Encounters](#encounters)
 + [Encounter Tables](#encounter-tables)
-
++ [Loot Tables](#loot-tables)
++ [Room Data](#room-data)
++ [Floors](#floors)
++ [Templates](#templates)
 
 ### Startup
 ![image](https://github.com/Some-Body-Else/P4G-Dungeon-Editor/assets/86819277/56f690ce-ea5d-41f7-8938-5550315487c6)<br>
