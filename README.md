@@ -85,5 +85,5 @@ Templates are how Persona 4 Golden determines which dungeon uses which rooms. Ea
 
 
 ## Thank You
-Just want to give a thank you to the members of the [Persona Modding Discord](https://discord.gg/naoto) for lending a hand whenever I had a question, even though most of this stuff was in the dark.
+Just want to give a thank you to the members of the [Persona Modding Discord](https://discord.gg/naoto) for lending a hand whenever I had a question, even though most of this stuff was in the dark. Also wanted to give it shoutouts to my brother, who drew the icon for the program.
 

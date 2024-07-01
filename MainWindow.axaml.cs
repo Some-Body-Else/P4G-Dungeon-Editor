@@ -2077,31 +2077,32 @@ namespace DungeonBuilder
                         Toggle = new();
                         Toggle.SetValue(Grid.ColumnProperty, j);
                         Toggle.SetValue(Grid.RowProperty, i);
-                        if (j % 2 == 1 && i % 2 == 0)
+                        if ( (j % 2 == 1 && i % 2 == 0) )
                         {
                             Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
                             Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
 
 
-                            var val1 = (_rooms[lastRoomDataID].connectionValues[(i-1)/2][j/2] >> 0x8);
-                            var val2 = (_rooms[lastRoomDataID].connectionValues[(i+1)/2][j/2] >> 0x8);
+                            var val1 = (_rooms[lastRoomDataID].connectionValues[i/2][(j-1)/2] >> 0x8);
+                            var val2 = (_rooms[lastRoomDataID].connectionValues[i/2][(j+1)/2] >> 0x8);
 
-                            Toggle.IsChecked = ((val1 & 0x4) > 0) && ((val2 & 0x1) > 0);
+                            Toggle.IsChecked = ((val1 & 0x8) > 0) && ((val2 & 0x2) > 0);
 
                             Toggle.IsVisible = _rooms[lastRoomDataID].hasDoor;
                             Toggle.IsCheckedChanged+=ChangeTileDoorData;
                             _roomDataMenu.RoomTiles.Children.Add(Toggle);
                         }
-                        else if (i % 2 == 1 & j % 2 == 0)
+                        else if ( (i % 2 == 1 & j % 2 == 0) )
                         {
 
 
                             Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
                             Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
-                            var val1 = (_rooms[lastRoomDataID].connectionValues[i/2][(j-1)/2] >> 0x8);
-                            var val2 = (_rooms[lastRoomDataID].connectionValues[i/2][(j+1)/2] >> 0x8);
 
-                            Toggle.IsChecked = ((val1 & 0x8) > 0) && ((val2 & 0x2) > 0);
+                            var val1 = (_rooms[lastRoomDataID].connectionValues[(i-1)/2][j/2] >> 0x8);
+                            var val2 = (_rooms[lastRoomDataID].connectionValues[(i+1)/2][j/2] >> 0x8);
+
+                            Toggle.IsChecked = ((val1 & 0x4) > 0) && ((val2 & 0x1) > 0);
 
                             Toggle.IsVisible = _rooms[lastRoomDataID].hasDoor;
                             Toggle.IsCheckedChanged+=ChangeTileDoorData;
@@ -2121,7 +2122,7 @@ namespace DungeonBuilder
                 col = box.GetValue(Grid.ColumnProperty);
                 if ( _rooms[lastRoomDataID].mapRamOutline[row][col] == 0 )
                 {
-                        box.SetValue(CheckBox.IsCheckedProperty, false);
+                    box.SetValue(CheckBox.IsCheckedProperty, false);
                 }
                 else if ( _rooms[lastRoomDataID].mapRamOutline[row][col] == 1 )
                 {
