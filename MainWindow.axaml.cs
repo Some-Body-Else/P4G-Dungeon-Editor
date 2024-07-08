@@ -10,7 +10,6 @@ using DungeonBuilder.modules.menu_objects;
 
 using System.Text.Json;
 using Avalonia.Controls.Primitives;
-using p4gpc.modules.internal_objects;
 using System.Collections.Generic;
 using Avalonia.VisualTree;
 using System.Linq;
@@ -24,6 +23,9 @@ using static DungeonBuilder.modules.menu_objects.LootTableMenu;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using System.Reflection;
+using System.Text.Encodings.Web;
+using System.Text.Unicode;
+using System.Security.Cryptography.X509Certificates;
 
 
 namespace DungeonBuilder
@@ -34,6 +36,25 @@ namespace DungeonBuilder
         public byte value = 0;
     }
 
+    public partial class FileLoadWindow : Window
+    {
+        private ProgressBar progress;
+        public FileLoadWindow(int filecount)
+        {
+            progress = new();
+            progress.SetValue(ProgressBar.MinimumProperty, 0);
+            progress.SetValue(ProgressBar.MaximumProperty, filecount);
+            progress.SetValue(ProgressBar.ValueProperty, 0);
+            progress.SetValue(ProgressBar.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+            progress.SetValue(ProgressBar.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+        }
+        public void AddProgress()
+        {
+            progress.Value++;
+        }
+    }
+
+
     public partial class MainWindow : Window
     {
         EncounterMenu _encounterMenu;
@@ -43,10 +64,9 @@ namespace DungeonBuilder
         FloorMenu _floorMenu;
         TemplateMenu _templateMenu;
 
-        EnemyEncountTable _EnemyEncountTable;
-        FloorObjectTable _FloorObjectTable;
-        FloorEncountTable _FloorEncountTable;
-        ChestLootTable _ChestLootTable;
+        List<EnemyEncounter> _enemyEncounters;
+        List<FloorEncounter> _floorEncounters;
+        List<LootTable> _lootTables;
         List<DungeonTemplates> _templates;
         List<DungeonFloor> _floors;
         List<DungeonRoom> _rooms;
@@ -60,9 +80,11 @@ namespace DungeonBuilder
         int lastRoomDataID;
         int lastFloorID;
         int lastTemplateID;
-
         string current_project_path;
-        
+        RadioButton ActiveButton;
+        List<int> colors = new List<int>() 
+        { 0xFFFFFF, 0xFFA88D, 0x896AA7, 0xA3B5FD, 0x75CBE7, 0x7FBDAF, 0xEE7179, 0xF6DA6F,
+          0xFFFFFF/2, 0xFFA88D/2, 0x896AA7/2, 0xA3B5FD/2, 0x75CBE7/2, 0x7FBDAF/2, 0xEE7179/2, 0xF6DA6F/2,};
 
         public static FilePickerFileType ENCOUNT_TBL { get; } = new("ENCOUNT_TBL")
         {
@@ -71,7 +93,6 @@ namespace DungeonBuilder
             AppleUniformTypeIdentifiers = ["public.image"],
             MimeTypes = ["image/*"]
         };
-
         public MainWindow()
         {
             InitializeComponent();
@@ -85,86 +106,55 @@ namespace DungeonBuilder
         }
         private async void HandleProjectMenuItemClick(object sender, RoutedEventArgs e)
         {
+            FileLoadWindow loading = new(8);
+            loading.Closing += (s, e) => { 
+                // e.Cancel = true; 
+            };
+            loading.Height = 240;
+            loading.Width = 360;
+
             if (sender == NewProjectButton)
             {
                 // Setup a crapton of internal classes to keep everything in check here
                 // Need all of the default data in place
-                var file = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-                {
-                    Title = "Select ENCOUNT.TBL",
-                    AllowMultiple = false,
-                    FileTypeFilter = [ENCOUNT_TBL]
-                });
-                if (file.Count >= 1)
-                {
-                    lastEncountID = 0;
-                    lastEncountTableID = 0;
-                    lastLootID = 0;
-                    lastRoomDataID = 0;
-                    lastFloorID = 0;
-                    lastTemplateID = 0;
 
-                    _encounterMenu = new();
-                    _encounterTableMenu = new();
-                    _lootTableMenu = new();
-                    // Room model menu here, when we get to it
-                    _roomDataMenu = new();
-                    _floorMenu = new();
-                    _templateMenu = new();
-                    _dungeon_template_dict = new();
+                loading.ShowDialog(this);
+                lastEncountID = 0;
+                lastEncountTableID = 0;
+                lastLootID = 0;
+                lastRoomDataID = 0;
+                lastFloorID = 0;
+                lastTemplateID = 0;
 
-                    byte[] encount_tbl;
-                    // Open reading stream from the first file.
-                    await using var stream = await file[0].OpenReadAsync();
-                    using (BinaryReader br = new BinaryReader(stream))
-                    {
-                        encount_tbl = br.ReadBytes((int)stream.Length);
-                    }
+                _encounterMenu = new();
+                _encounterTableMenu = new();
+                _lootTableMenu = new();
+                // Room model menu here, when we get to it
+                _roomDataMenu = new();
+                _floorMenu = new();
+                _templateMenu = new();
+                _dungeon_template_dict = new();
 
+                LoadJSON(Path.GetFullPath("JSON"), loading);
 
-                    // Going to want more flexible offsets at a later point, but for now this works fine
-                    _EnemyEncountTable = new EnemyEncountTable();
-                    _EnemyEncountTable.LoadFrom(encount_tbl, 0);
+                project_loaded = true;
 
-                    _FloorObjectTable = new FloorObjectTable();
-                    _FloorObjectTable.LoadFrom(encount_tbl, 0x5890);
-
-                    _FloorEncountTable = new FloorEncountTable();
-                    _FloorEncountTable.LoadFrom(encount_tbl, 0x6070);
-
-                    _ChestLootTable = new ChestLootTable();
-                    _ChestLootTable.LoadFrom(encount_tbl, 0xA370);
-
-                    StreamReader jsonStream = new StreamReader("JSON\\dungeon_floors.json");
-                    string jsonContents = jsonStream.ReadToEnd();
-                    _floors = JsonSerializer.Deserialize<List<DungeonFloor>>(jsonContents)!;
-
-
-                    jsonStream = new StreamReader("JSON\\dungeon_rooms.json");
-                    jsonContents = jsonStream.ReadToEnd();
-                    _rooms = JsonSerializer.Deserialize<List<DungeonRoom>>(jsonContents)!;
-
-                    jsonStream = new StreamReader("JSON\\dungeon_minimap.json");
-                    jsonContents = jsonStream.ReadToEnd();
-                    _minimap = JsonSerializer.Deserialize<List<DungeonMinimap>>(jsonContents)!;
-
-                    jsonStream = new StreamReader("JSON\\dungeon_templates.json");
-                    jsonContents = jsonStream.ReadToEnd();
-                    _templates = JsonSerializer.Deserialize<List<DungeonTemplates>>(jsonContents)!;
-
-                    Dictionary<string, byte> temp;
-                    jsonStream = new StreamReader("JSON\\dungeon_template_dict.json");
-                    jsonContents = jsonStream.ReadToEnd();
-                    temp = JsonSerializer.Deserialize<Dictionary<string, byte>>(jsonContents)!;
-                    foreach (string key in temp.Keys)
-                    {
-                        _dungeon_template_dict.Add(Byte.Parse(key), temp[key]);
-                    }
-                    project_loaded = true;
-
-                    SaveProjectButton.IsEnabled = true;
-                }
+                SaveProjectButton.IsEnabled = true;
                 // Currently, Room Model button is marked as false, change that once we begin to tackle that side of things
+
+                if (ActiveButton != null)
+                {
+                    ActiveButton.IsChecked = false;
+                }
+                ActiveGrid.RowDefinitions.Clear();
+                ActiveGrid.ColumnDefinitions.Clear();
+                ActiveGrid.Children.Clear();
+                ActiveGrid.SetValue(Grid.BackgroundProperty, Brush.Parse("#24BCC1"));
+                Label success = new();
+                success.SetValue(Label.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                success.SetValue(Label.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                success.SetValue(Label.ContentProperty, "New project started! Select a button on the left to start editing.");
+                ActiveGrid.Children.Add(success);
             }
             else if (sender == LoadProjectButton)
             {
@@ -175,6 +165,7 @@ namespace DungeonBuilder
                 });
                 if (folder.Count > 0)
                 {
+                    loading.ShowDialog(this);
                     var current_project_path = folder[0].Path;
 
                     lastEncountID = 0;
@@ -192,57 +183,27 @@ namespace DungeonBuilder
                     _floorMenu = new();
                     _templateMenu = new();
                     _dungeon_template_dict = new();
-
-                    byte[] encount_tbl;
-                    // Open reading stream from the first file.
-                    var stream = File.OpenRead(Path.Combine(current_project_path.LocalPath.ToString(), "ENCOUNT.TBL"));
-                    using (BinaryReader br = new BinaryReader(stream))
-                    {
-                        encount_tbl = br.ReadBytes((int)stream.Length);
-                    }
+                    
+                    LoadJSON(current_project_path.LocalPath.ToString(), loading);
 
 
-                    // Going to want more flexible offsets at a later point, but for now this works fine
-                    _EnemyEncountTable = new EnemyEncountTable();
-                    _EnemyEncountTable.LoadFrom(encount_tbl, 0);
-
-                    _FloorObjectTable = new FloorObjectTable();
-                    _FloorObjectTable.LoadFrom(encount_tbl, 0x5890);
-
-                    _FloorEncountTable = new FloorEncountTable();
-                    _FloorEncountTable.LoadFrom(encount_tbl, 0x6070);
-
-                    _ChestLootTable = new ChestLootTable();
-                    _ChestLootTable.LoadFrom(encount_tbl, 0xA370);
-
-                    StreamReader jsonStream = new StreamReader(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_floors.json"));
-                    string jsonContents = jsonStream.ReadToEnd();
-                    _floors = JsonSerializer.Deserialize<List<DungeonFloor>>(jsonContents)!;
-
-
-                    jsonStream = new StreamReader(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_rooms.json"));
-                    jsonContents = jsonStream.ReadToEnd();
-                    _rooms = JsonSerializer.Deserialize<List<DungeonRoom>>(jsonContents)!;
-
-                    jsonStream = new StreamReader(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_minimap.json"));
-                    jsonContents = jsonStream.ReadToEnd();
-                    _minimap = JsonSerializer.Deserialize<List<DungeonMinimap>>(jsonContents)!;
-
-                    jsonStream = new StreamReader(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_templates.json"));
-                    jsonContents = jsonStream.ReadToEnd();
-                    _templates = JsonSerializer.Deserialize<List<DungeonTemplates>>(jsonContents)!;
-
-                    Dictionary<string, byte> temp;
-                    jsonStream = new StreamReader(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_template_dict.json"));
-                    jsonContents = jsonStream.ReadToEnd();
-                    temp = JsonSerializer.Deserialize<Dictionary<string, byte>>(jsonContents)!;
-                    foreach (string key in temp.Keys)
-                    {
-                        _dungeon_template_dict.Add(Byte.Parse(key), temp[key]);
-                    }
                     project_loaded = true;
 
                     SaveProjectButton.IsEnabled = true;
+
+                    if (ActiveButton != null)
+                    {
+                        ActiveButton.IsChecked = false;
+                    }
+                    ActiveGrid.RowDefinitions.Clear();
+                    ActiveGrid.ColumnDefinitions.Clear();
+                    ActiveGrid.Children.Clear();
+                    ActiveGrid.SetValue(Grid.BackgroundProperty, Brush.Parse("#24BCC1"));
+                    Label success = new();
+                    success.SetValue(Label.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                    success.SetValue(Label.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                    success.SetValue(Label.ContentProperty, "Project loaded!");
+                    ActiveGrid.Children.Add(success);
                 }
             }
             else if (sender == SaveProjectButton)
@@ -254,19 +215,24 @@ namespace DungeonBuilder
                 });
                 if (folder.Count > 0)
                 {
+                    loading.ShowDialog(this);
                     var current_project_path = folder[0].Path;
-                    var serializeOptions = new JsonSerializerOptions { WriteIndented = true };
+
+                    var serializeOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+                                                                       WriteIndented = true };
 
                     string jsonContents = JsonSerializer.Serialize(_floors, serializeOptions);
+                    jsonContents.Replace("\u0027", "'");
                     var writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_floors.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-
+                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_dungeon_template_dict, serializeOptions);
                     writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_template_dict.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
+                    loading.AddProgress();
 
                     foreach (DungeonRoom room in _rooms)
                     {
@@ -298,192 +264,93 @@ namespace DungeonBuilder
                     writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_rooms.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
+                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_templates, serializeOptions);
                     writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_templates.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
+                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_minimap, serializeOptions);
                     writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_minimap.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
+                    loading.AddProgress();
 
-
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "ENCOUNT.TBL"));
-                    WriteEncountTbl(writer);
-
+                    jsonContents = JsonSerializer.Serialize(_enemyEncounters, serializeOptions);
+                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "encounters.json"));
+                    writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
+                    loading.AddProgress();
+
+                    jsonContents = JsonSerializer.Serialize(_floorEncounters, serializeOptions);
+                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "encounter_tables.json"));
+                    writer.Write(Encoding.UTF8.GetBytes(jsonContents));
+                    writer.Close();
+                    loading.AddProgress();
+
+                    jsonContents = JsonSerializer.Serialize(_lootTables, serializeOptions);
+                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "loot_tables.json"));
+                    writer.Write(Encoding.UTF8.GetBytes(jsonContents));
+                    writer.Close();
+                    loading.AddProgress();
+
+
+                    // writer.Close();
                 }
 
             }
+            loading.Close();
         }
-
-        private void WriteEncountTbl(FileStream? writer)
+        private void LoadJSON(string path, FileLoadWindow loading)
         {
-            var binWriter = new BinaryWriter(writer);
-            int overall_size = 0;
-            int size = _EnemyEncountTable.GetSize();
-            binWriter.Write(size);
-            foreach (var encounter in _EnemyEncountTable._enemyEncountEntries)
+
+            StreamReader jsonStream = new StreamReader(Path.Combine(path, "dungeon_floors.json"));
+            string jsonContents = jsonStream.ReadToEnd();
+            _floors = JsonSerializer.Deserialize<List<DungeonFloor>>(jsonContents)!;
+            loading.AddProgress();
+
+            jsonStream = new StreamReader(Path.Combine(path, "dungeon_rooms.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _rooms = JsonSerializer.Deserialize<List<DungeonRoom>>(jsonContents)!;
+            loading.AddProgress();
+
+            jsonStream = new StreamReader(Path.Combine(path, "dungeon_minimap.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _minimap = JsonSerializer.Deserialize<List<DungeonMinimap>>(jsonContents)!;
+            loading.AddProgress();
+
+            jsonStream = new StreamReader(Path.Combine(path, "dungeon_templates.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _templates = JsonSerializer.Deserialize<List<DungeonTemplates>>(jsonContents)!;
+            loading.AddProgress();
+
+            Dictionary<string, byte> temp;
+            jsonStream = new StreamReader(Path.Combine(path, "dungeon_template_dict.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            temp = JsonSerializer.Deserialize<Dictionary<string, byte>>(jsonContents)!;
+            foreach (string key in temp.Keys)
             {
-                binWriter.Write(encounter._flags);
-                binWriter.Write(encounter._field04);
-                binWriter.Write(encounter._field06);
-                foreach (UInt16 unit in encounter._units)
-                {
-                    binWriter.Write(unit);
-                }
-                binWriter.Write(encounter._fieldID);
-                binWriter.Write(encounter._roomID);
-                binWriter.Write(encounter._musicID);
+                _dungeon_template_dict.Add(Byte.Parse(key), temp[key]);
             }
+            loading.AddProgress();
 
-            overall_size += size+4;
-            if ((overall_size) % 16 != 0)
-            {
-                for (int i = ((overall_size) % 16); i < 16; i++)
-                {
-                    binWriter.Write((byte)0);
-                    overall_size++;
-                }
-            }
+            jsonStream = new StreamReader(Path.Combine(path, "encounters.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _enemyEncounters = JsonSerializer.Deserialize<List<EnemyEncounter>>(jsonContents)!;
+            loading.AddProgress();
 
-            size = _FloorObjectTable.GetSize();
-            binWriter.Write(size);
-            foreach (var floor_entry in _FloorObjectTable._floorObjectEntries)
-            {
-                binWriter.Write(floor_entry._EncountTableLookup);
-                binWriter.Write(floor_entry._MinEncounterCount);
-                binWriter.Write(floor_entry._InitialEncounterCount);
-                binWriter.Write(floor_entry._MaxChestCount);
-                binWriter.Write((byte)0);
-                binWriter.Write(floor_entry._LootTableLookup);
-            }
+            jsonStream = new StreamReader(Path.Combine(path, "encounter_tables.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _floorEncounters = JsonSerializer.Deserialize<List<FloorEncounter>>(jsonContents)!;
+            loading.AddProgress();
 
-            overall_size += size+4;
-            if ((overall_size) % 16 != 0)
-            {
-                for (int i = ((overall_size) % 16); i < 16; i++)
-                {
-                    binWriter.Write((byte)0);
-                    overall_size++;
-                }
-            }
-            /*
-             Since we're currently writing a new ENCOUNT.TBL instead of a json surrogate, we have to account
-             for a blank table that exists between the actually useful ones. It's 200 bytes large and is
-             filled entirely with 0s.
-             */
-            size = 200;
-            binWriter.Write(size);
-            for (int i = 0; i < 200/4; i++)
-            {
-                binWriter.Write((int)0);
-            }
-
-            overall_size += size+4;
-            if ((overall_size) % 16 != 0)
-            {
-                for (int i = ((overall_size) % 16); i < 16; i++)
-                {
-                    binWriter.Write((byte)0);
-                    overall_size++;
-                }
-            }
-
-            size = _FloorEncountTable.GetSize();
-            binWriter.Write(size);
-            foreach (var floor_encounter in _FloorEncountTable._floorEncounterEntries)
-            {
-                binWriter.Write(floor_encounter._u1);
-                // Two other values follow, but they appear unused, so just duplicating this one
-                binWriter.Write(floor_encounter._u1);
-                binWriter.Write(floor_encounter._u1);
-
-
-                binWriter.Write(floor_encounter._u2);
-                // Two other values follow, but they appear unused, so just duplicating this one
-                binWriter.Write(floor_encounter._u2);
-                binWriter.Write(floor_encounter._u2);
-
-                binWriter.Write(floor_encounter._u3);
-                // Two other values follow, but they appear unused, so just duplicating this one
-                binWriter.Write(floor_encounter._u3);
-                binWriter.Write(floor_encounter._u3);
-
-                // Three more bytes follow, appearing to always be 0
-                binWriter.Write( (byte)0 );
-                binWriter.Write( (byte)0 );
-                binWriter.Write( (byte)0 );
-            
-                for (int i = 0; i < 2; i++)
-                {
-                    // Doubling up because there are two versions of each table presented, even though
-                    // only one of them appears to be in use
-                    foreach (var encounter in floor_encounter._encounters)
-                    {
-                        // Two values here, but the only thing that appears to matter for the first is
-                        // being nonzero, at least from my observations. We'll find out one way or another
-                        if (encounter != 0)
-                        {
-                            binWriter.Write((UInt16)1);
-                        }
-                        else
-                        {
-                            binWriter.Write((UInt16)0);
-                        }
-                        binWriter.Write((UInt16)encounter);
-
-                    }
-                }
-            }
-
-            overall_size += size+4;
-            if ((overall_size) % 16 != 0)
-            {
-                for (int i = ((overall_size) % 16); i < 16; i++)
-                {
-                    binWriter.Write((byte)0);
-                    overall_size++;
-                }
-            }
-
-            size = _ChestLootTable.GetSize();
-            binWriter.Write(size);
-            foreach (var loot_entry in _ChestLootTable._chestLootEntries)
-            {
-                foreach (var entry in loot_entry._lootEntries)
-                {
-                    binWriter.Write(entry._itemWeight);
-                    binWriter.Write(entry._itemID);
-                    binWriter.Write(entry._chestFlags);
-                    if (entry._itemID != 0)
-                    {
-                        binWriter.Write((byte)1);
-                    }
-                    else
-                    {
-                        binWriter.Write((byte)0);
-                    }
-                    binWriter.Write(entry._chestModel);
-                    binWriter.Write((int)0);
-                }
-            }
-
-            overall_size += size+4;
-            if ((overall_size) % 16 != 0)
-            {
-                for (int i = ((overall_size) % 16); i < 16; i++)
-                {
-                    binWriter.Write((byte)0);
-                    overall_size++;
-                }
-            }
-
-            binWriter.Close();
+            jsonStream = new StreamReader(Path.Combine(path, "loot_tables.json"));
+            jsonContents = jsonStream.ReadToEnd();
+            _lootTables = JsonSerializer.Deserialize<List<LootTable>>(jsonContents)!;
+            loading.AddProgress();
         }
-
         private void HandleAreaRadioButtonClick(object sender, RoutedEventArgs e)
         {
             if (!project_loaded)
@@ -502,7 +369,7 @@ namespace DungeonBuilder
             DockPanel ItemContainer;
             Grid InnerGrid;
             Grid InnerGrid2;
-
+            ActiveButton = (RadioButton)sender;
             if (sender == EncounterButton)
             {
                 StackPanel PairContents;
@@ -516,28 +383,55 @@ namespace DungeonBuilder
                 ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#3330a0"));
 
 
+                InnerGrid = new();
+                InnerGrid.SetValue(Grid.RowProperty, 0);
+                InnerGrid.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                ActiveGrid.Children.Add(InnerGrid);
+
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddEncounterEntry;
+                InnerGrid.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveEncounterEntry;
+                InnerGrid.Children.Add(addsub);
 
                 // https://docs.avaloniaui.net/docs/reference/controls/numericupdown
                 NumericUpDown EncountSelector = new();
                 ItemOutline = new();
-                EncountSelector.SetValue(NumericUpDown.NameProperty, "EncounterID");
                 EncountSelector.SetValue(NumericUpDown.ValueProperty, lastEncountID);
                 EncountSelector.SetValue(NumericUpDown.IncrementProperty, 1);
                 EncountSelector.SetValue(NumericUpDown.MinimumProperty, 0);
-                EncountSelector.SetValue(NumericUpDown.MaximumProperty, _EnemyEncountTable._enemyEncountEntries.Count-1);
+                EncountSelector.SetValue(NumericUpDown.MaximumProperty, _enemyEncounters.Count-1);
                 EncountSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
 
                 EncountSelector.ValueChanged+=ChangeActiveEncounter;
                 _encounterMenu.EncounterID = EncountSelector;
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.Child = EncountSelector;
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#150F80") );
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
                 ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f") );
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10") );
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8") );
-                ActiveGrid.Children.Add(ItemOutline);
+                InnerGrid.Children.Add(ItemOutline);
 
                 InnerGrid = new();
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
@@ -592,7 +486,7 @@ namespace DungeonBuilder
                                 ItemOutline.Child = Identifier;
 
                             WritableTextbox = new();
-                            WritableTextbox.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[i].ToString());
+                            WritableTextbox.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[i].ToString());
                             WritableTextbox.SetValue(MaskedTextBox.CornerRadiusProperty, CornerRadius.Parse("0"));
                             WritableTextbox.TextChanged += ChangeEncounterData;
                             _encounterMenu.Unit[i] = WritableTextbox;
@@ -654,7 +548,7 @@ namespace DungeonBuilder
 
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._flags.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].Flags.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.Flags = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -687,7 +581,7 @@ namespace DungeonBuilder
 
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._musicID.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].MusicID.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.MusicID = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -721,7 +615,7 @@ namespace DungeonBuilder
 
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._fieldID.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].FieldID.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.FieldID = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -754,7 +648,7 @@ namespace DungeonBuilder
 
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._roomID.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].RoomID.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.RoomID = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -788,7 +682,7 @@ namespace DungeonBuilder
 
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field04.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].Field04.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.Field04 = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -822,7 +716,7 @@ namespace DungeonBuilder
                             ItemContainer.Children.Add(ItemOutline);
                             TextBoxInput = new();
                             
-                            TextBoxInput.SetValue(TextBlock.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field06.ToString());
+                            TextBoxInput.SetValue(TextBlock.TextProperty, _enemyEncounters[lastEncountID].Field06.ToString());
                             TextBoxInput.TextChanged += ChangeEncounterData;
                             _encounterMenu.Field06 = TextBoxInput;
                             ItemContainer.Children.Add(TextBoxInput);
@@ -833,7 +727,6 @@ namespace DungeonBuilder
 
                 StackPanel PairContents;
                 MaskedTextBox WritableTextbox;
-                TextBlock PlainText;
                 ActiveGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
                 ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#65379E"));
@@ -844,23 +737,69 @@ namespace DungeonBuilder
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
 
+
+                ToggleButton button = new();
+                button.SetValue(Grid.ColumnProperty, 0);
+                button.SetValue(ToggleButton.BackgroundProperty, BrushColor.ConvertFrom("#990DDA"));
+                button.SetValue(ToggleButton.CornerRadiusProperty, CornerRadius.Parse("8"));
+                button.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("60 15"));
+                button.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
+                button.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                button.SetValue(ToggleButton.ContentProperty, "Is Raining");
+                button.SetValue(ToggleButton.VerticalContentAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                button.SetValue(ToggleButton.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                button.IsCheckedChanged += ChangeEncounterTableData;
+                _encounterTableMenu.IsRainy = button;
+                InnerGrid.Children.Add(button);
+
+
+                InnerGrid2 = new();
+                InnerGrid2.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                InnerGrid.Children.Add(InnerGrid2);
+
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddFloorEncounterTable;
+                InnerGrid2.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveFloorEncounterTable;
+                InnerGrid2.Children.Add(addsub);
+
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#320368"));
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
                 ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
-                    // https://docs.avaloniaui.net/docs/reference/controls/numericupdown
-                    NumericUpDown EncountSelector = new();
+                InnerGrid2.Children.Add(ItemOutline);
+
+                NumericUpDown EncountSelector = new();
                 EncountSelector.SetValue(NumericUpDown.IncrementProperty, 1);
                 EncountSelector.SetValue(NumericUpDown.MinimumProperty, 0);
-                EncountSelector.SetValue(NumericUpDown.MaximumProperty, _FloorEncountTable._floorEncounterEntries.Count-1);
+                EncountSelector.SetValue(NumericUpDown.MaximumProperty, _floorEncounters.Count-1);
                 EncountSelector.SetValue(NumericUpDown.ValueProperty, lastEncountTableID);
                 EncountSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
                 ItemOutline.Child = EncountSelector;
                 EncountSelector.ValueChanged += ChangeActiveEncounterTable;
-                InnerGrid.Children.Add(ItemOutline);
+                _encounterTableMenu.EncountTable = EncountSelector;
+
                 ActiveGrid.Children.Add(InnerGrid);
 
 
@@ -875,13 +814,14 @@ namespace DungeonBuilder
                 ItemOutline.Child = InnerGrid;
 
                 InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
-                InnerGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(4, GridUnitType.Star));
 
+                InnerGrid.ColumnDefinitions.Add(new(2, GridUnitType.Star));
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(2, GridUnitType.Star));
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(2, GridUnitType.Star));
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 0);
@@ -896,19 +836,19 @@ namespace DungeonBuilder
 
 
                 PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
-                                        WritableTextbox = new();
-                        Identifier = new();
-                        Identifier.SetValue(TextBlock.TextProperty, "Byte00");
-                        Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
-                        PairContents.Children.Add(Identifier);
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "Weight (Normal)");
+                Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                PairContents.Children.Add(Identifier);
 
 
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
-                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u1.ToString());
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].NormalWeightRegular.ToString());
 
                 WritableTextbox.TextChanged += ChangeEncounterTableData;
-                    _encounterTableMenu.Byte00 = WritableTextbox;
-                    PairContents.Children.Add(WritableTextbox);
+                _encounterTableMenu.NormalWeight = WritableTextbox;
+                PairContents.Children.Add(WritableTextbox);
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 0);
@@ -923,17 +863,17 @@ namespace DungeonBuilder
 
 
                 PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
-                        WritableTextbox = new();
-                        Identifier = new();
-                        Identifier.SetValue(TextBlock.TextProperty, "Byte03");
-                        Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
-                        PairContents.Children.Add(Identifier);
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "Weight (Rare)");
+                Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                PairContents.Children.Add(Identifier);
 
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
-                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u2.ToString());
-                        WritableTextbox.TextChanged += ChangeEncounterTableData;
-                        _encounterTableMenu.Byte03 = WritableTextbox;
-                        PairContents.Children.Add(WritableTextbox);
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RareWeightRegular.ToString());
+                WritableTextbox.TextChanged += ChangeEncounterTableData;
+                _encounterTableMenu.RareWeight = WritableTextbox;
+                PairContents.Children.Add(WritableTextbox);
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 0);
@@ -947,20 +887,98 @@ namespace DungeonBuilder
                 ItemOutline.Child = PairContents;
                 PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
 
-                        WritableTextbox = new();
-                        Identifier = new();
-                Identifier.SetValue(TextBlock.TextProperty, "Byte06");
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "Weight (Gold)");
                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                 PairContents.Children.Add(Identifier);
 
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
-                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u3.ToString());
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].GoldWeightRegular.ToString());
+
+                _encounterTableMenu.GoldWeight = WritableTextbox;
+                PairContents.Children.Add(WritableTextbox);
+
+
+                ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 1);
+                ItemOutline.SetValue(Grid.ColumnProperty, 0);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
+                InnerGrid.Children.Add(ItemOutline);
+
+                PairContents = new();
+                ItemOutline.Child = PairContents;
+
+
+                PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "Always 0xFF");
+                Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                PairContents.Children.Add(Identifier);
+
+
+                WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].AlwaysFF.ToString());
 
                 WritableTextbox.TextChanged += ChangeEncounterTableData;
-                        _encounterTableMenu.Byte06 = WritableTextbox;
+                _encounterTableMenu.AlwaysFF = WritableTextbox;
+                PairContents.Children.Add(WritableTextbox);
+
+                ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 1);
+                ItemOutline.SetValue(Grid.ColumnProperty, 2);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
+                InnerGrid.Children.Add(ItemOutline);
+
+                PairContents = new();
+                ItemOutline.Child = PairContents;
+
+
+                PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "% of usage (Rare)");
+                Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                PairContents.Children.Add(Identifier);
+
+                WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].PercentRare.ToString());
+                WritableTextbox.TextChanged += ChangeEncounterTableData;
+                _encounterTableMenu.RarePercent = WritableTextbox;
+                PairContents.Children.Add(WritableTextbox);
+
+                ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 1);
+                ItemOutline.SetValue(Grid.ColumnProperty, 4);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
+                InnerGrid.Children.Add(ItemOutline);
+
+                PairContents = new();
+                ItemOutline.Child = PairContents;
+                PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
+
+                WritableTextbox = new();
+                Identifier = new();
+                Identifier.SetValue(TextBlock.TextProperty, "% of usage (Gold)");
+                Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                PairContents.Children.Add(Identifier);
+
+                WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
+                WritableTextbox.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].PercentGold.ToString());
+
+
+                WritableTextbox.TextChanged += ChangeEncounterTableData;
+                        _encounterTableMenu.GoldPercent = WritableTextbox;
                         PairContents.Children.Add(WritableTextbox);
                 ScrollViewer EncountContainer = new();
-                EncountContainer.SetValue(Grid.RowProperty, 1);
+                EncountContainer.SetValue(Grid.RowProperty, 2);
                 EncountContainer.SetValue(Grid.ColumnProperty, 0);
                 EncountContainer.SetValue(Grid.ColumnSpanProperty, 5);
                 InnerGrid.Children.Add(EncountContainer);
@@ -970,21 +988,31 @@ namespace DungeonBuilder
                 EncountContainer.SetValue(ContentProperty, EncountContents);
 
                 int counter = 1;
+               
                 for (int i = 1; i <= 6; i++)
                 {
                     InnerGrid2= new();
+                    InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                    InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
                     InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                     InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                     InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                     InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                     InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                    if (i % 2 == 0)
+                    if (counter < 20)
                     {
-                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                        // Regular encounter selection
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#6D6D6D"));
+                    }
+                    else if (counter < 25)
+                    {
+                        // Rare encounter selection
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#AD1C0F"));
                     }
                     else
                     {
-                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#6728BF"));
+                        // Gold hand encounter selection
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#AA8708"));
                     }
                     InnerGrid2.SetValue(MarginProperty, Thickness.Parse("0 5"));
                     for (int j = 0; j < 5; j++)
@@ -992,7 +1020,7 @@ namespace DungeonBuilder
 
                         PairContents = new();
                         PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
-                        PairContents.SetValue(Grid.RowProperty, i);
+                        PairContents.SetValue(Grid.RowProperty, 0);
                         PairContents.SetValue(Grid.ColumnProperty, j);
                         Identifier = new();
                         Identifier.SetValue(TextBlock.TextProperty, "Encounter "+(counter));
@@ -1002,14 +1030,69 @@ namespace DungeonBuilder
                         PairContents.Children.Add(Identifier);
 
                         WritableTextbox = new();
-                        WritableTextbox.SetValue(TextBlock.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._encounters[i].ToString());
+
+                        if (counter <= 20)
+                        {
+                            // Regular encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersNormal[(counter-1)%20][0].ToString());
+                            _encounterTableMenu.NormalEncounters[(counter-1)%20] = WritableTextbox;
+                        }
+                        else if (counter <= 25)
+                        {
+                            // Rare encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersRare[(counter-1)%5][0].ToString());
+                            _encounterTableMenu.RareEncounters[(counter-1)%5] = WritableTextbox;
+                        }
+                        else
+                        {
+                            // Gold hand encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersGold[(counter-1)%5][0].ToString());
+                            _encounterTableMenu.GoldEncounters[(counter-1)%5] = WritableTextbox;
+                        }
                         WritableTextbox.SetValue(TextBlock.MarginProperty, Thickness.Parse("4, 0"));
                         WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                         WritableTextbox.TextChanged += ChangeEncounterTableData;
-                        _encounterTableMenu.Encounters[counter-1] = WritableTextbox;
                         PairContents.Children.Add(WritableTextbox);
 
                         InnerGrid2.Children.Add(PairContents);
+
+                        PairContents = new();
+                        PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
+                        PairContents.SetValue(Grid.RowProperty, 1);
+                        PairContents.SetValue(Grid.ColumnProperty, j);
+                        Identifier = new();
+                        Identifier.SetValue(TextBlock.TextProperty, "Weight");
+                        Identifier.SetValue(TextBlock.MarginProperty, Thickness.Parse("4, 0"));
+                        Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                        Identifier.SetValue(TextBlock.FontStyleProperty, FontStyle.Oblique);
+                        PairContents.Children.Add(Identifier);
+
+                        WritableTextbox = new();
+                        WritableTextbox.SetValue(TextBlock.MarginProperty, Thickness.Parse("4, 0"));
+                        WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
+                        WritableTextbox.TextChanged += ChangeEncounterTableData;
+                        if (counter <= 20)
+                        {
+                            // Regular encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersNormal[(counter-1)%20][1].ToString());
+                            _encounterTableMenu.NormalEncounterWeights[(counter-1)%20] = WritableTextbox;
+                        }
+                        else if (counter <= 25)
+                        {
+                            // Rare encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersRare[(counter-1)%5][1].ToString());
+                            _encounterTableMenu.RareEncounterWeights[(counter-1)%5] = WritableTextbox;
+                        }
+                        else
+                        {
+                            // Gold hand encounter selection
+                            WritableTextbox.SetValue(TextBlock.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersGold[(counter-1)%5][1].ToString());
+                            _encounterTableMenu.GoldEncounterWeights[(counter-1)%5] = WritableTextbox;
+                        }
+                        PairContents.Children.Add(WritableTextbox);
+
+                        InnerGrid2.Children.Add(PairContents);
+
                         counter++;
                     }
                     EncountContents.Children.Add(InnerGrid2);
@@ -1030,10 +1113,38 @@ namespace DungeonBuilder
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#F99C03"));
 
+                InnerGrid = new();
+                InnerGrid.SetValue(Grid.RowProperty, 0);
+                InnerGrid.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                ActiveGrid.Children.Add(InnerGrid);
 
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddLootTable;
+                InnerGrid.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveLootTable;
+                InnerGrid.Children.Add(addsub);
 
                 ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#CC7D00"));
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
                 ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
@@ -1043,13 +1154,14 @@ namespace DungeonBuilder
                 NumericUpDown LootSelector = new();
                 LootSelector.SetValue(NumericUpDown.IncrementProperty, 1);
                 LootSelector.SetValue(NumericUpDown.MinimumProperty, 0);
-                LootSelector.SetValue(NumericUpDown.MaximumProperty, _ChestLootTable._chestLootEntries.Count-1);
-                LootSelector.SetValue(NumericUpDown.ValueProperty, lastEncountTableID);
+                LootSelector.SetValue(NumericUpDown.MaximumProperty, _lootTables.Count-1);
+                LootSelector.SetValue(NumericUpDown.ValueProperty, lastLootID);
                 LootSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
                 LootSelector.ValueChanged+=ChangeActiveLootTable;
+                _lootTableMenu.LootID = LootSelector;
                 ItemOutline.Child = LootSelector;
 
-                ActiveGrid.Children.Add(ItemOutline);
+                InnerGrid.Children.Add(ItemOutline);
 
 
                 ItemOutline = new();
@@ -1064,7 +1176,7 @@ namespace DungeonBuilder
                 ActiveEntries.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Vertical);
                 ActiveGrid.Children.Add(ItemOutline);
                 _lootTableMenu.Entries = new List<LootTableEntry>();
-                for (int i = 0; i < _ChestLootTable._chestLootEntries[lastLootID]._lootEntries.Count;  i++)
+                for (int i = 0; i < _lootTables[lastLootID].LootEntries.Count;  i++)
                 {
                     LootTableMenu.LootTableEntry entry = new();
                     InnerGrid = new();
@@ -1097,7 +1209,7 @@ namespace DungeonBuilder
 
                     InnerGrid.Children.Add(PairControl);
 
-                    WritableTextbox.Text = _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemWeight.ToString();
+                    WritableTextbox.Text = _lootTables[lastLootID].LootEntries[i].ItemWeight.ToString();
                     WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                     WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("0 0 0 3"));
                     WritableTextbox.TextChanged += ChangeLootTableData;
@@ -1118,7 +1230,7 @@ namespace DungeonBuilder
                     PairControl.Children.Add(PlainText);
 
 
-                    WritableTextbox.Text = _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemID.ToString();
+                    WritableTextbox.Text = _lootTables[lastLootID].LootEntries[i].ItemID.ToString();
                     WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                     WritableTextbox.SetValue(StackPanel.MarginProperty, Thickness.Parse("0 0 0 3"));
                     WritableTextbox.TextChanged += ChangeLootTableData;
@@ -1142,7 +1254,7 @@ namespace DungeonBuilder
                     PlainText.SetValue(TextBlock.MarginProperty, Thickness.Parse("0 3 0 0"));
                     PairControl.Children.Add(PlainText);
 
-                    WritableTextbox.Text = _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestFlags.ToString();
+                    WritableTextbox.Text = _lootTables[lastLootID].LootEntries[i].ChestFlags.ToString();
                     WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                     WritableTextbox.SetValue(StackPanel.MarginProperty, Thickness.Parse("0 0 0 3"));
                     WritableTextbox.TextChanged += ChangeLootTableData;
@@ -1165,7 +1277,7 @@ namespace DungeonBuilder
                     PairControl.Children.Add(PlainText);
 
                     // Might want to swap later
-                    ChestTypeToggle.IsChecked = _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestModel > 0;
+                    ChestTypeToggle.IsChecked = _lootTables[lastLootID].LootEntries[i].ChestModel > 0;
                     ChestTypeToggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
                     ChestTypeToggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
                     ChestTypeToggle.SetValue(ToggleButton.MarginProperty, Thickness.Parse("0 0 0 3"));
@@ -1212,14 +1324,44 @@ namespace DungeonBuilder
                 InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.Children.Add(InnerGrid);
 
+                InnerGrid2 = new();
+                InnerGrid2.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                InnerGrid.Children.Add(InnerGrid2);
+
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddRoom;
+                InnerGrid2.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveRoom;
+                InnerGrid2.Children.Add(addsub);
+
+
                 ItemOutline = new();
-                ItemOutline.SetValue(Grid.ColumnProperty, 2);
+                ItemOutline.SetValue(Grid.RowProperty, 0);
+                ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#003D1C"));
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
                 ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
-                InnerGrid.Children.Add(ItemOutline);
+                InnerGrid2.Children.Add(ItemOutline);
 
                 // https://docs.avaloniaui.net/docs/reference/controls/numericupdown
                 NumericUpDown RoomSelector = new();
@@ -1241,23 +1383,6 @@ namespace DungeonBuilder
                 InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 InnerGrid.RowDefinitions.Add(new(3, GridUnitType.Star));
 
-
-                PairContents = new();
-                PairContents.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Horizontal);
-                PairContents.SetValue(Grid.RowProperty, 0);
-                PlainText = new();
-                AddSubRoom = new();
-                PlainText.Text = "+";
-                AddSubRoom.Content = PlainText;
-                AddSubRoom.SetValue(NumericUpDown.NameProperty, "AddRoom");
-                _roomDataMenu.AddRoom = AddSubRoom;
-                AddSubRoom.Click+=AddRoom;
-                AddSubRoom.SetValue(Grid.RowProperty, 0);
-                AddSubRoom.SetValue(StackPanel.MarginProperty, Avalonia.Thickness.Parse("4"));
-                AddSubRoom.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                AddSubRoom.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                AddSubRoom.SetValue(Button.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
-                InnerGrid.Children.Add(AddSubRoom);
 
                 string sizex = _rooms[lastRoomDataID].sizeX.ToString();
                 string sizey = _rooms[lastRoomDataID].sizeY.ToString();
@@ -1386,7 +1511,36 @@ namespace DungeonBuilder
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#751600"));
 
+                InnerGrid = new();
+                InnerGrid.SetValue(Grid.RowProperty, 0);
+                InnerGrid.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                ActiveGrid.Children.Add(InnerGrid);
+
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddFloorEntry;
+                InnerGrid.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveFloorEntry;
+                InnerGrid.Children.Add(addsub);
+
                 ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#4B0200"));
@@ -1404,7 +1558,8 @@ namespace DungeonBuilder
                 FloorSelector.SetValue(Grid.RowProperty, 0);
                 FloorSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
                 FloorSelector.SetValue(Grid.ColumnProperty, 1);
-                ActiveGrid.Children.Add(ItemOutline);
+                _floorMenu.FloorID = FloorSelector;
+                InnerGrid.Children.Add(ItemOutline);
 
 
                 ItemOutline = new();
@@ -1630,7 +1785,7 @@ namespace DungeonBuilder
                 WritableTextbox = new();
                 WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("4 0 4 0"));
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
-                WritableTextbox.Text = _FloorObjectTable._floorObjectEntries[lastFloorID]._EncountTableLookup.ToString();
+                WritableTextbox.Text = _floors[lastFloorID].EncountTableLookup.ToString();
                 WritableTextbox.TextChanged += ChangeFloorData;
                 _floorMenu.EncounterTableID = WritableTextbox;
 
@@ -1648,7 +1803,7 @@ namespace DungeonBuilder
                 WritableTextbox = new();
                 WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("4 0 4 0"));
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
-                WritableTextbox.Text = _FloorObjectTable._floorObjectEntries[lastFloorID]._LootTableLookup.ToString();
+                WritableTextbox.Text = _floors[lastFloorID].LootTableLookup.ToString();
                 WritableTextbox.TextChanged += ChangeFloorData;
                 _floorMenu.LootTableID = WritableTextbox;
 
@@ -1665,7 +1820,7 @@ namespace DungeonBuilder
                 PlainText.Text = "Max Chest Count";
                 PlainText.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox = new();
-                WritableTextbox.Text = _FloorObjectTable._floorObjectEntries[lastFloorID]._MaxChestCount.ToString();
+                WritableTextbox.Text = _floors[lastFloorID].MaxChestCount.ToString();
                 WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("4 0 4 0"));
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox.TextChanged += ChangeFloorData;
@@ -1687,7 +1842,7 @@ namespace DungeonBuilder
                 PlainText.Text = "Max Enemy Count";
                 PlainText.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox = new();
-                WritableTextbox.Text = _FloorObjectTable._floorObjectEntries[lastFloorID]._InitialEncounterCount.ToString();
+                WritableTextbox.Text = _floors[lastFloorID].InitialEncounterCount.ToString();
                 WritableTextbox.TextChanged += ChangeFloorData;
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("4 0 4 0"));
@@ -1704,7 +1859,7 @@ namespace DungeonBuilder
                 PlainText.Text = "Min. Enemy Count";
                 PlainText.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox = new();
-                WritableTextbox.Text = _FloorObjectTable._floorObjectEntries[lastFloorID]._MinEncounterCount.ToString();
+                WritableTextbox.Text = _floors[lastFloorID].MinEncounterCount.ToString();
                 WritableTextbox.TextChanged += ChangeFloorData;
                 WritableTextbox.SetValue(MaskedTextBox.TextAlignmentProperty, TextAlignment.Center);
                 WritableTextbox.SetValue(MaskedTextBox.MarginProperty, Thickness.Parse("4 0 4 0"));
@@ -1729,10 +1884,38 @@ namespace DungeonBuilder
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#BAA000"));
-                // https://docs.avaloniaui.net/docs/reference/controls/numericupdown
+
+                InnerGrid = new();
+                InnerGrid.SetValue(Grid.RowProperty, 0);
+                InnerGrid.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                ActiveGrid.Children.Add(InnerGrid);
+
+                Button addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 0);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.Content = "+";
+                addsub.Click += AddTemplateEntry;
+                InnerGrid.Children.Add(addsub);
+                addsub = new();
+                addsub.SetValue(Grid.ColumnProperty, 0);
+                addsub.SetValue(Grid.RowProperty, 1);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.Content = "-";
+                addsub.Click += RemoveTemplateEntry;
+                InnerGrid.Children.Add(addsub);
 
                 ItemOutline = new();
-                ActiveGrid.Children.Add(ItemOutline);
+                InnerGrid.Children.Add(ItemOutline);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#827000"));
@@ -1740,15 +1923,15 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
-                NumericUpDown RoomSelector = new();
-                ItemOutline.Child = RoomSelector;
-                RoomSelector.SetValue(NumericUpDown.ValueProperty, lastTemplateID);
-                RoomSelector.SetValue(NumericUpDown.IncrementProperty, 1);
-                RoomSelector.SetValue(NumericUpDown.MinimumProperty, 0);
-                RoomSelector.SetValue(NumericUpDown.MaximumProperty, _templates.Count-1);
-                RoomSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
-                RoomSelector.ValueChanged+=ChangeActiveTemplate;
-                _roomDataMenu.RoomID = RoomSelector;
+                NumericUpDown TemplateSelector = new();
+                ItemOutline.Child = TemplateSelector;
+                TemplateSelector.SetValue(NumericUpDown.ValueProperty, lastTemplateID);
+                TemplateSelector.SetValue(NumericUpDown.IncrementProperty, 1);
+                TemplateSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                TemplateSelector.SetValue(NumericUpDown.MaximumProperty, _templates.Count-1);
+                TemplateSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
+                TemplateSelector.ValueChanged+=ChangeActiveTemplate;
+                _templateMenu.TemplateID = TemplateSelector;
 
 
                 InnerGrid2 = new();
@@ -1921,14 +2104,14 @@ namespace DungeonBuilder
                 _templateMenu.FieldsThatUse = panel1;
 
                 PairContents = new();
-                RoomSelector = new();
-                RoomSelector.SetValue(NumericUpDown.NameProperty, "FieldSelected");
-                RoomSelector.SetValue(NumericUpDown.ValueProperty, 0);
-                RoomSelector.SetValue(NumericUpDown.IncrementProperty, 1);
-                RoomSelector.SetValue(NumericUpDown.MinimumProperty, 0);
-                RoomSelector.SetValue(NumericUpDown.MaximumProperty, 255);
-                _templateMenu.FieldSelected = RoomSelector;
-                PairContents.Children.Add(RoomSelector);
+                TemplateSelector = new();
+                TemplateSelector.SetValue(NumericUpDown.NameProperty, "FieldSelected");
+                TemplateSelector.SetValue(NumericUpDown.ValueProperty, 0);
+                TemplateSelector.SetValue(NumericUpDown.IncrementProperty, 1);
+                TemplateSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                TemplateSelector.SetValue(NumericUpDown.MaximumProperty, 255);
+                _templateMenu.FieldSelected = TemplateSelector;
+                PairContents.Children.Add(TemplateSelector);
                 StackPanel PairContents2 = new();
                 button = new();
                 button.Content = "+";
@@ -2064,7 +2247,7 @@ namespace DungeonBuilder
                         {
                             Int32 color = 0xFFFFFF / 16;
                             color = color * (panel.value);
-                            panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (color.ToString("X").PadLeft(6))));
+                            panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (colors[panel.value].ToString("X").PadLeft(6))));
                         }
                         else
                         {
@@ -2108,7 +2291,6 @@ namespace DungeonBuilder
                             Toggle.IsCheckedChanged+=ChangeTileDoorData;
                             _roomDataMenu.RoomTiles.Children.Add(Toggle);
                         }
-
                     }
                 }
             }
@@ -2137,10 +2319,10 @@ namespace DungeonBuilder
         private void ChangeActiveEncounter(object? sender, NumericUpDownValueChangedEventArgs e)
         {
             lastEncountID = (int)((NumericUpDown)sender).Value;
-            if ( lastEncountID > _EnemyEncountTable._enemyEncountEntries.Count)
+            if ( lastEncountID > _enemyEncounters.Count)
             {
-                ((NumericUpDown)sender).Text = (_EnemyEncountTable._enemyEncountEntries.Count-1).ToString();
-                lastEncountID = _EnemyEncountTable._enemyEncountEntries.Count-1;
+                ((NumericUpDown)sender).Text = (_enemyEncounters.Count-1).ToString();
+                lastEncountID = _enemyEncounters.Count-1;
             }
             else if (lastEncountID < 0)
             {
@@ -2148,19 +2330,19 @@ namespace DungeonBuilder
                 lastEncountID = 0;
             }
 
-            _encounterMenu.Unit[0].SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[0].ToString());
-            _encounterMenu.Unit[1].SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[1].ToString());
-            _encounterMenu.Unit[2].SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[2].ToString());
-            _encounterMenu.Unit[3].SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[3].ToString());
-            _encounterMenu.Unit[4].SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[4].ToString());
+            _encounterMenu.Unit[0].SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[0].ToString());
+            _encounterMenu.Unit[1].SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[1].ToString());
+            _encounterMenu.Unit[2].SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[2].ToString());
+            _encounterMenu.Unit[3].SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[3].ToString());
+            _encounterMenu.Unit[4].SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Units[4].ToString());
 
 
-            _encounterMenu.Flags.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._flags.ToString());
-            _encounterMenu.Field04.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field04.ToString());
-            _encounterMenu.Field06.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field06.ToString());
-            _encounterMenu.FieldID.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._fieldID.ToString());
-            _encounterMenu.MusicID.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._musicID.ToString());
-            _encounterMenu.RoomID.SetValue(MaskedTextBox.TextProperty, _EnemyEncountTable._enemyEncountEntries[lastEncountID]._roomID.ToString());
+            _encounterMenu.Flags.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Flags.ToString());
+            _encounterMenu.Field04.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Field04.ToString());
+            _encounterMenu.Field06.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].Field06.ToString());
+            _encounterMenu.FieldID.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].FieldID.ToString());
+            _encounterMenu.MusicID.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].MusicID.ToString());
+            _encounterMenu.RoomID.SetValue(MaskedTextBox.TextProperty, _enemyEncounters[lastEncountID].RoomID.ToString());
         }
         private void ChangeEncounterData(object? sender, EventArgs e)
         {
@@ -2175,74 +2357,191 @@ namespace DungeonBuilder
             }
             if (sender.Equals(_encounterMenu.Unit[0]))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[0] = (ushort)value;
+                _enemyEncounters[lastEncountID].Units[0] = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Unit[1]))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[1] = (ushort)value;
+                _enemyEncounters[lastEncountID].Units[1] = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Unit[2]))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[2] = (ushort)value;
+                _enemyEncounters[lastEncountID].Units[2] = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Unit[3]))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[3] = (ushort)value;
+                _enemyEncounters[lastEncountID].Units[3] = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Unit[4]))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._units[4] = (ushort)value;
+                _enemyEncounters[lastEncountID].Units[4] = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Flags))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._flags = value;
+                _enemyEncounters[lastEncountID].Flags = value;
             }
             else if (sender.Equals(_encounterMenu.Field04))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field04 = (ushort)value;
+                _enemyEncounters[lastEncountID].Field04 = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.Field06))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._field06 = (ushort)value;
+                _enemyEncounters[lastEncountID].Field06 = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.FieldID))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._fieldID = (ushort)value;
+                _enemyEncounters[lastEncountID].FieldID = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.MusicID))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._musicID = (ushort)value;
+                _enemyEncounters[lastEncountID].MusicID = (ushort)value;
             }
             else if (sender.Equals(_encounterMenu.RoomID))
             {
-                _EnemyEncountTable._enemyEncountEntries[lastEncountID]._roomID = (ushort)value;
+                _enemyEncounters[lastEncountID].RoomID = (ushort)value;
             }
             else
             {
                 throw new Exception();
             }
         }
+        private void AddEncounterEntry(object? sender, EventArgs e)
+        {
+            EnemyEncounter justAdded = new();
+            justAdded.Units = new();
+            for (int i = 0; i < 5; i++)
+            {
+                justAdded.Units.Add(0);
+            }
+            justAdded.Field04 = 0;
+            justAdded.Field06 = 0;
+            justAdded.Flags = 1;
+            justAdded.FieldID = 0;
+            justAdded.RoomID = 0;
+            justAdded.MusicID = 0;
+            _enemyEncounters.Add(justAdded);
+            _encounterMenu.EncounterID.SetValue(NumericUpDown.MaximumProperty, _enemyEncounters.Count-1);
+        }
+        private void RemoveEncounterEntry(object? sender, EventArgs e)
+        {
+            _enemyEncounters.RemoveAt(lastEncountID);
+            lastEncountID--;
+            _encounterMenu.EncounterID.SetValue(NumericUpDown.MaximumProperty, _enemyEncounters.Count-1);
+            _encounterMenu.EncounterID.SetValue(NumericUpDown.ValueProperty, lastEncountID);
+        }
         private void ChangeActiveEncounterTable(object? sender, NumericUpDownValueChangedEventArgs e)  
         {
             lastEncountTableID = (int)((NumericUpDown)sender).Value;
-            if (lastEncountTableID > _FloorEncountTable._floorEncounterEntries.Count)
+            if (lastEncountTableID > _floorEncounters.Count)
             {
                 ((NumericUpDown)sender).Text = "0";
                 lastEncountTableID = 0;
             }
             else if (lastEncountTableID < 0)
             {
-                ((NumericUpDown)sender).Text = (_FloorEncountTable._floorEncounterEntries.Count-1).ToString();
-                lastEncountTableID = _FloorEncountTable._floorEncounterEntries.Count-1;
+                ((NumericUpDown)sender).Text = (_floorEncounters.Count-1).ToString();
+                lastEncountTableID = _floorEncounters.Count-1;
+            }
+            UpdateEncounterTableDisplay();
+        }
+        private void AddFloorEncounterTable(object? sender, EventArgs e)
+        {
+            FloorEncounter justAdded = new();
+            justAdded.NormalWeightRegular = 100;
+            justAdded.NormalWeightRain = 100;
+            justAdded.RareWeightRegular = 0;
+            justAdded.RareWeightRain = 0;
+            justAdded.GoldWeightRegular = 0;
+            justAdded.GoldWeightRain = 0;
+            justAdded.AlwaysFF = 0xFF;
+            justAdded.PercentRare = 0;
+            justAdded.PercentGold = 0;
+
+            justAdded.RegularEncountersNormal = new();
+            justAdded.RainyEncountersNormal = new();
+            for (int i = 0; i < 20; i++)
+            {
+                justAdded.RegularEncountersNormal.Add(new List<ushort> { 0, 0 });
+                justAdded.RainyEncountersNormal.Add(new List<ushort> { 0, 0 });
             }
 
-            _encounterTableMenu.Byte00.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u1.ToString());
-            _encounterTableMenu.Byte03.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u2.ToString());
-            _encounterTableMenu.Byte06.SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u3.ToString());
-            for (int i = 0; i < _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._encounters.Count; i++)
+            justAdded.RegularEncountersRare = new();
+            justAdded.RainyEncountersRare = new();
+            for (int i = 0; i < 5; i++)
             {
-                _encounterTableMenu.Encounters[i].SetValue(MaskedTextBox.TextProperty, _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._encounters[i].ToString());
+                justAdded.RegularEncountersRare.Add(new List<ushort> { 0, 0 });
+                justAdded.RainyEncountersRare.Add(new List<ushort> { 0, 0 });
             }
+
+            justAdded.RegularEncountersGold = new();
+            justAdded.RainyEncountersGold = new();
+            for (int i = 0; i < 5; i++)
+            {
+                justAdded.RegularEncountersGold.Add(new List<ushort> { 0, 0 });
+                justAdded.RainyEncountersGold.Add(new List<ushort> { 0, 0 });
+            }
+
+            _floorEncounters.Add(justAdded);
+            _encounterTableMenu.EncountTable.SetValue(NumericUpDown.MaximumProperty, _floorEncounters.Count-1);
+        }
+        private void RemoveFloorEncounterTable(object? sender, EventArgs e)
+        {
+            _floorEncounters.RemoveAt(lastEncountTableID);
+            lastEncountTableID--;
+            _encounterTableMenu.EncountTable.SetValue(NumericUpDown.MaximumProperty, _floorEncounters.Count-1);
+            _encounterTableMenu.EncountTable.SetValue(NumericUpDown.ValueProperty, lastEncountTableID);
+        }
+        private void UpdateEncounterTableDisplay()
+        {
+            if (_encounterTableMenu.IsRainy.IsChecked == true)
+            {
+                _encounterTableMenu.NormalWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].NormalWeightRain.ToString());
+                _encounterTableMenu.RareWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RareWeightRain.ToString());
+                _encounterTableMenu.GoldWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].GoldWeightRain.ToString());
+
+
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RainyEncountersNormal.Count; i++)
+                {
+                    _encounterTableMenu.NormalEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersNormal[i][0].ToString());
+                    _encounterTableMenu.NormalEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersNormal[i][1].ToString());
+                }
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RainyEncountersRare.Count; i++)
+                {
+                    _encounterTableMenu.RareEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersRare[i][0].ToString());
+                    _encounterTableMenu.RareEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersRare[i][1].ToString());
+                }
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RainyEncountersGold.Count; i++)
+                {
+                    _encounterTableMenu.GoldEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersGold[i][0].ToString());
+                    _encounterTableMenu.GoldEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RainyEncountersGold[i][1].ToString());
+                }
+            }
+            else
+            {
+
+                _encounterTableMenu.NormalWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].NormalWeightRegular.ToString());
+                _encounterTableMenu.RareWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RareWeightRegular.ToString());
+                _encounterTableMenu.GoldWeight.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].GoldWeightRegular.ToString());
+
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RegularEncountersNormal.Count; i++)
+                {
+                    _encounterTableMenu.NormalEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersNormal[i][0].ToString());
+                    _encounterTableMenu.NormalEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersNormal[i][1].ToString());
+                }
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RegularEncountersRare.Count; i++)
+                {
+                    _encounterTableMenu.RareEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersRare[i][0].ToString());
+                    _encounterTableMenu.RareEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersRare[i][1].ToString());
+                }
+                for (int i = 0; i < _floorEncounters[lastEncountTableID].RegularEncountersGold.Count; i++)
+                {
+                    _encounterTableMenu.GoldEncounters[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersGold[i][0].ToString());
+                    _encounterTableMenu.GoldEncounterWeights[i].SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].RegularEncountersGold[i][1].ToString());
+                }
+            }
+
+            _encounterTableMenu.AlwaysFF.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].AlwaysFF.ToString());
+            _encounterTableMenu.RarePercent.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].PercentRare.ToString());
+            _encounterTableMenu.GoldPercent.SetValue(MaskedTextBox.TextProperty, _floorEncounters[lastEncountTableID].PercentGold.ToString());
         }
         private void ChangeEncounterTableData(object? sender, EventArgs e)
         {
@@ -2257,52 +2556,184 @@ namespace DungeonBuilder
                 value = 0;
             }
 
-            if (sender ==  _encounterTableMenu.Byte00)
+            if (sender == _encounterTableMenu.IsRainy)
             {
-                _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u1 = (byte)value;
+                UpdateEncounterTableDisplay();
             }
-            else if (sender ==  _encounterTableMenu.Byte03)
+            else if (sender ==  _encounterTableMenu.NormalWeight)
             {
-                _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u2 = (byte)value;
+                if (_encounterTableMenu.IsRainy.IsChecked == true)
+                {
+                    _floorEncounters[lastEncountTableID].NormalWeightRain = (byte)value;
+                }
+                else
+                {
+                    _floorEncounters[lastEncountTableID].NormalWeightRegular = (byte)value;
+                }
             }
-            else if (sender ==  _encounterTableMenu.Byte06)
+            else if (sender ==  _encounterTableMenu.RareWeight)
             {
-                _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._u3 = (byte)value;
+                if (_encounterTableMenu.IsRainy.IsChecked == true)
+                {
+                    _floorEncounters[lastEncountTableID].RareWeightRain = (byte)value;
+                }
+                else
+                {
+                    _floorEncounters[lastEncountTableID].RareWeightRegular = (byte)value;
+                }
+            }
+            else if (sender ==  _encounterTableMenu.NormalWeight)
+            {
+                if (_encounterTableMenu.IsRainy.IsChecked == true)
+                {
+                    _floorEncounters[lastEncountTableID].GoldWeightRain = (byte)value;
+                }
+                else
+                {
+                    _floorEncounters[lastEncountTableID].GoldWeightRegular = (byte)value;
+                }
+            }
+            else if (sender == _encounterTableMenu.AlwaysFF)
+            {
+                _floorEncounters[lastEncountTableID].AlwaysFF = (byte)value;
+            }
+            else if (sender == _encounterTableMenu.RarePercent)
+            {
+                _floorEncounters[lastEncountTableID].PercentRare = (byte)value;
+            }
+            else if (sender == _encounterTableMenu.GoldPercent)
+            {
+                _floorEncounters[lastEncountTableID].PercentGold = (byte)value;
             }
             else
             {
-                for (int i = 0; i < _encounterTableMenu.Encounters.Length; i++)
+                for (int i = 0; i < _encounterTableMenu.NormalEncounters.Length; i++)
                 {
-                    if (_encounterTableMenu.Encounters[i] == sender)
+                    if (_encounterTableMenu.NormalEncounters[i] == sender)
                     {
-                        _FloorEncountTable._floorEncounterEntries[lastEncountTableID]._encounters[i] = (ushort)value;
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersNormal[i][0] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersNormal[i][0] = (ushort)value;
+                        }
+                        return;
+                    }
+                    else if (_encounterTableMenu.NormalEncounterWeights[i] == sender)
+                    {
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersNormal[i][1] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersNormal[i][1] = (ushort)value;
+                        }
+                        return;
+                    }
+                }
+                for (int i = 0; i < _encounterTableMenu.RareEncounters.Length; i++)
+                {
+                    if (_encounterTableMenu.RareEncounters[i] == sender)
+                    {
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersRare[i][0] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersRare[i][0] = (ushort)value;
+                        }
+                        return;
+                    }
+                    else if (_encounterTableMenu.RareEncounterWeights[i] == sender)
+                    {
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersRare[i][1] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersRare[i][1] = (ushort)value;
+                        }
+                        return;
+                    }
+                }
+                for (int i = 0; i < _encounterTableMenu.GoldEncounters.Length; i++)
+                {
+                    if (_encounterTableMenu.GoldEncounters[i] == sender)
+                    {
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersGold[i][0] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersGold[i][0] = (ushort)value;
+                        }
+                        return;
+                    }
+                    else if (_encounterTableMenu.GoldEncounterWeights[i] == sender)
+                    {
+                        if (_encounterTableMenu.IsRainy.IsChecked == true)
+                        {
+                            _floorEncounters[lastEncountTableID].RainyEncountersGold[i][1] = (byte)value;
+                        }
+                        else
+                        {
+                            _floorEncounters[lastEncountTableID].RegularEncountersGold[i][1] = (ushort)value;
+                        }
                         return;
                     }
                 }
                 throw new Exception();
-                
             }
         }
         private void ChangeActiveLootTable(object? sender, NumericUpDownValueChangedEventArgs e)
         {
             lastLootID = (int)((NumericUpDown)sender).Value;
-            if (lastLootID > _ChestLootTable._chestLootEntries.Count-1)
+            if (lastLootID > _lootTables.Count-1)
             {
                 ((NumericUpDown)sender).Text = "0";
                 lastLootID = 0;
             }
             else if (lastLootID < 0)
             {
-                ((NumericUpDown)sender).Text = (_ChestLootTable._chestLootEntries.Count-1).ToString();
-                lastLootID = _ChestLootTable._chestLootEntries.Count-1;
+                ((NumericUpDown)sender).Text = (_lootTables.Count-1).ToString();
+                lastLootID = _lootTables.Count-1;
             }
             for (int i = 0; i < _lootTableMenu.Entries.Count; i++)
             {
-                _lootTableMenu.Entries[i].ItemWeight.SetValue(MaskedTextBox.TextProperty, _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemWeight.ToString());
-                _lootTableMenu.Entries[i].ItemID.SetValue(MaskedTextBox.TextProperty, _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemID.ToString());
-                _lootTableMenu.Entries[i].ChestFlags.SetValue(MaskedTextBox.TextProperty, _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestFlags.ToString());
-                _lootTableMenu.Entries[i].ChestModel.SetValue(ToggleButton.IsCheckedProperty, _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestModel > 0);
+                _lootTableMenu.Entries[i].ItemWeight.SetValue(MaskedTextBox.TextProperty, _lootTables[lastLootID].LootEntries[i].ItemWeight.ToString());
+                _lootTableMenu.Entries[i].ItemID.SetValue(MaskedTextBox.TextProperty, _lootTables[lastLootID].LootEntries[i].ItemID.ToString());
+                _lootTableMenu.Entries[i].ChestFlags.SetValue(MaskedTextBox.TextProperty, _lootTables[lastLootID].LootEntries[i].ChestFlags.ToString());
+                _lootTableMenu.Entries[i].ChestModel.SetValue(ToggleButton.IsCheckedProperty, _lootTables[lastLootID].LootEntries[i].ChestModel > 0);
             }
+        }
+        private void AddLootTable(object? sender, EventArgs e)
+        {
+            LootTable justAdded = new();
+            justAdded.LootEntries = new();
+            for (int i = 0; i < 29; i++)
+            {
+                LootTable.LootEntry entry = new();
+                entry.ItemID = 0;
+                entry.ItemWeight = 0;
+                entry.ChestFlags = 0;
+                entry.ChestModel = 0;
+                justAdded.LootEntries.Add(entry);
+            }
+            _lootTables.Add(justAdded);
+            _lootTableMenu.LootID.SetValue(NumericUpDown.MaximumProperty, _lootTables.Count-1);
+        }
+        private void RemoveLootTable(object? sender, EventArgs e)
+        {
+            _lootTables.RemoveAt(lastLootID);
+            lastLootID--;
+            _lootTableMenu.LootID.SetValue(NumericUpDown.MaximumProperty, _lootTables.Count-1);
+            _lootTableMenu.LootID.SetValue(NumericUpDown.ValueProperty, lastLootID);
         }
         private void ChangeLootTableData(object? sender, EventArgs e)
         {
@@ -2313,17 +2744,17 @@ namespace DungeonBuilder
                     var entry = _lootTableMenu.Entries[i];
                     if (entry.ItemWeight == box)
                     {
-                        _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemWeight = (ushort)int.Parse(box.Text);
+                        _lootTables[lastLootID].LootEntries[i].ItemWeight = (ushort)int.Parse(box.Text);
                         break;
                     }
                     else if (entry.ItemID == box)
                     {
-                        _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._itemID = (ushort)int.Parse(box.Text);
+                        _lootTables[lastLootID].LootEntries[i].ItemID = (ushort)int.Parse(box.Text);
                         break;
                     }
                     else if (entry.ChestFlags == box)
                     {
-                        _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestFlags= (ushort)int.Parse(box.Text);
+                        _lootTables[lastLootID].LootEntries[i].ChestFlags= (ushort)int.Parse(box.Text);
                         break;
                     }
                 }
@@ -2337,11 +2768,11 @@ namespace DungeonBuilder
                     {
                         if (toggleButton.IsChecked == false)
                         {
-                            _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestModel = 0;
+                            _lootTables[lastLootID].LootEntries[i].ChestModel = 0;
                         }
                         else
                         {
-                            _ChestLootTable._chestLootEntries[lastLootID]._lootEntries[i]._chestModel = 1;
+                            _lootTables[lastLootID].LootEntries[i].ChestModel = 1;
                         }
                         break;
                     }
@@ -2376,11 +2807,11 @@ namespace DungeonBuilder
             _floorMenu.Byte04.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].Byte04.ToString());
             _floorMenu.Byte0A.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].Byte0A.ToString());
 
-            _floorMenu.EncounterTableID.SetValue(MaskedTextBox.TextProperty, _FloorObjectTable._floorObjectEntries[lastFloorID]._EncountTableLookup.ToString());
-            _floorMenu.LootTableID.SetValue(MaskedTextBox.TextProperty, _FloorObjectTable._floorObjectEntries[lastFloorID]._LootTableLookup.ToString());
-            _floorMenu.MaxChestCount.SetValue(MaskedTextBox.TextProperty, _FloorObjectTable._floorObjectEntries[lastFloorID]._MaxChestCount.ToString());
-            _floorMenu.InitialEnemyCount.SetValue(MaskedTextBox.TextProperty, _FloorObjectTable._floorObjectEntries[lastFloorID]._InitialEncounterCount.ToString());
-            _floorMenu.MinEnemyCount.SetValue(MaskedTextBox.TextProperty, _FloorObjectTable._floorObjectEntries[lastFloorID]._MinEncounterCount.ToString());
+            _floorMenu.EncounterTableID.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].EncountTableLookup.ToString());
+            _floorMenu.LootTableID.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].LootTableLookup.ToString());
+            _floorMenu.MaxChestCount.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].MaxChestCount.ToString());
+            _floorMenu.InitialEnemyCount.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].InitialEncounterCount.ToString());
+            _floorMenu.MinEnemyCount.SetValue(MaskedTextBox.TextProperty, _floors[lastFloorID].MinEncounterCount.ToString());
 
 
         }
@@ -2443,24 +2874,51 @@ namespace DungeonBuilder
 
             else if (sender  == _floorMenu.EncounterTableID)
             {
-                _FloorObjectTable._floorObjectEntries[lastFloorID]._EncountTableLookup = (ushort)value;
+                _floors[lastFloorID].EncountTableLookup = (ushort)value;
             }
             else if (sender  == _floorMenu.LootTableID)
             {
-                _FloorObjectTable._floorObjectEntries[lastFloorID]._LootTableLookup = value;
+                _floors[lastFloorID].LootTableLookup = (ushort)value;
             }
             else if (sender  == _floorMenu.MaxChestCount)
             {
-                _FloorObjectTable._floorObjectEntries[lastFloorID]._MaxChestCount = (byte)value;
+                _floors[lastFloorID].MaxChestCount = (byte)value;
             }
             else if (sender  == _floorMenu.InitialEnemyCount)
             {
-                _FloorObjectTable._floorObjectEntries[lastFloorID]._InitialEncounterCount = (byte)value;
+                _floors[lastFloorID].InitialEncounterCount = (byte)value;
             }
             else if (sender  == _floorMenu.MinEnemyCount)
             {
-                _FloorObjectTable._floorObjectEntries[lastFloorID]._MinEncounterCount = (byte)value;
+                _floors[lastFloorID].MinEncounterCount = (byte)value;
             }
+        }
+        private void AddFloorEntry(object? sender, EventArgs e)
+        {
+            DungeonFloor justAdded = new();
+            justAdded.floorName = "NULL";
+            justAdded.ID = 0;
+            justAdded.subID = 0;
+            justAdded.Byte04 = 0;
+            justAdded.Byte0A = 0;
+            justAdded.tileCountMin = 0;
+            justAdded.tileCountMax = 0;
+            justAdded.dungeonScript = 0;
+            justAdded.usedEnv = 0;
+            justAdded.EncountTableLookup = 0;
+            justAdded.LootTableLookup = 0;
+            justAdded.InitialEncounterCount = 0;
+            justAdded.MinEncounterCount = 0;
+            justAdded.MaxChestCount = 0;
+            _floors.Add(justAdded);
+            _floorMenu.FloorID.SetValue(NumericUpDown.MaximumProperty, _floors.Count-1);
+        }
+        private void RemoveFloorEntry(object? sender, EventArgs e)
+        {
+            _floors.RemoveAt(lastFloorID);
+            lastFloorID--;
+            _floorMenu.FloorID.SetValue(NumericUpDown.MaximumProperty, _floors.Count-1);
+            _floorMenu.FloorID.SetValue(NumericUpDown.ValueProperty, lastFloorID);
         }
         private void ChangeActiveRoom(object? sender, NumericUpDownValueChangedEventArgs e)
         {
@@ -2567,7 +3025,7 @@ namespace DungeonBuilder
         }
         private void AddRoom(object? sender, EventArgs e)
         {
-            if (_rooms.Count <257)
+            if (_rooms.Count < 257)
             {
                 DungeonRoom NewRoom = new();
 
@@ -2598,6 +3056,13 @@ namespace DungeonBuilder
             {
                 // Maybe let them know ;)
             }
+        }
+        private void RemoveRoom(object? sender, EventArgs e)
+        {
+            _rooms.RemoveAt(lastRoomDataID);
+            lastRoomDataID++;
+            _roomDataMenu.RoomID.SetValue(NumericUpDown.MaximumProperty, _rooms.Count-1);
+            _roomDataMenu.RoomID.SetValue(NumericUpDown.ValueProperty, lastRoomDataID);
         }
         private void ChangeTileDirectionData(object? sender, EventArgs e)
         {
@@ -2784,7 +3249,7 @@ namespace DungeonBuilder
 
                 Int32 color = 0xFFFFFF / 16;
                 color = color * panel.value;
-                panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (color.ToString("X").PadLeft(6))));
+                panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (colors[panel.value].ToString("X").PadLeft(6))));
             }
             else
             {
@@ -3029,6 +3494,43 @@ namespace DungeonBuilder
         }
         private void DragLeave(object? sender, DragEventArgs e)
         {
+        }
+        private void AddTemplateEntry(object? sender, EventArgs e)
+        {
+            DungeonTemplates justAdded = new();
+            justAdded.rooms = new();
+            // Default is just going to be a duplicate of template 0
+            justAdded.rooms.Add(1);
+            justAdded.rooms.Add(2);
+            justAdded.rooms.Add(3);
+            justAdded.rooms.Add(5);
+            justAdded.rooms.Add(6);
+            justAdded.rooms.Add(7);
+            justAdded.rooms.Add(9);
+            justAdded.rooms.Add(10);
+            justAdded.rooms.Add(4);
+            justAdded.roomCount = 8;
+            justAdded.roomExCount = 9;
+            justAdded.exitNum = 10;
+            _templates.Add(justAdded);
+            _templateMenu.TemplateID.SetValue(NumericUpDown.MaximumProperty, _templates.Count-1);
+        }
+        private void RemoveTemplateEntry(object? sender, EventArgs e)
+        {
+            if (_dungeon_template_dict.ContainsValue((byte)lastTemplateID))
+            {
+                foreach (var item in _dungeon_template_dict.Where(kvp => kvp.Value == (byte)lastTemplateID).ToList())
+                {
+                    {
+                        _dungeon_template_dict.Remove(item.Key);
+                    }
+
+                }
+            }
+            _templates.RemoveAt(lastTemplateID);
+            lastTemplateID--;
+            _templateMenu.TemplateID.SetValue(NumericUpDown.MaximumProperty, _templates.Count-1);
+            _templateMenu.TemplateID.SetValue(NumericUpDown.ValueProperty, lastTemplateID);
         }
     }
 }

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace p4gpc.modules.internal_objects
+namespace DungeonBuilder.modules.internal_objects
 {
     public class DungeonTemplates
     {

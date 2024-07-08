@@ -17,7 +17,7 @@ namespace DungeonBuilder.modules.menu_objects
             public MaskedTextBox ChestFlags { get; set; }
             public ToggleButton ChestModel { get; set; }
         }
-        public NumericUpDown LootID;
+        public NumericUpDown LootID { get; set; }
         public List<LootTableEntry> Entries;
     }
 }

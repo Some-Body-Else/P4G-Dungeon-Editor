@@ -51,9 +51,18 @@
 	  <None Update="JSON\dungeon_templates.json">
 	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 	  </None>
-	  <None Update="JSON\dungeon_template_dict.json">
-		<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-	  </None>
+		<None Update="JSON\dungeon_template_dict.json">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="JSON\encounter_tables.json">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="JSON\encounters.json">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="JSON\loot_tables.json">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
 	  <None Update="Assets\icon.ico">
 		<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 	  </None>

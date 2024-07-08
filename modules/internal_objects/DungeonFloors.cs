@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace p4gpc.modules.internal_objects
+namespace DungeonBuilder.modules.internal_objects
 {
     
     public class DungeonFloor
@@ -18,6 +18,10 @@ namespace p4gpc.modules.internal_objects
         public byte dungeonScript{ get; set; }
         public byte usedEnv{ get; set; }
         public string? floorName { get; set; }
-        // public nuint nameAddress { get; set; }
+        public ushort EncountTableLookup { get; set; }
+        public byte MinEncounterCount { get; set; }
+        public byte InitialEncounterCount { get; set; }
+        public byte MaxChestCount { get; set; }
+        public ushort LootTableLookup { get; set; }
     }
 }

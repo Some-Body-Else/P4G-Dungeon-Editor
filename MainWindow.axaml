@@ -67,7 +67,7 @@
 			</MenuItem>
 		</Menu>
 
-		<Grid Name="MainGrid">
+		<Grid Name="OptionGrid">
 			<Grid.ColumnDefinitions>
 				<ColumnDefinition Width="148"></ColumnDefinition>
 				<ColumnDefinition Width="*"></ColumnDefinition>
@@ -95,7 +95,6 @@
 					<RadioButton Name="RoomDataButton" Content="Room Data" HorizontalAlignment="Stretch"
 								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="4"
 								 Click="HandleAreaRadioButtonClick"></RadioButton>
-
 					<RadioButton Name="FloorButton" Content="Floors" HorizontalAlignment="Stretch"
 								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="5"
 								 Click="HandleAreaRadioButtonClick"></RadioButton>
