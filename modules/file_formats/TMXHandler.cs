@@ -42,7 +42,7 @@ namespace DungeonBuilder.modules.file_formats
             public ushort ImgWidth;        // Must be divisible by 8
             public ushort ImgHeight;       // Must be divisible by 2
                                            // 2-byte spacer
-            public ushort AlwaysFF00;      // From the examples I've seen
+            public uint AlwaysFF000000;      // From the examples I've seen
                                            // Then space is filled until the header is 64-bytes large
 
 
@@ -60,10 +60,10 @@ namespace DungeonBuilder.modules.file_formats
                 FileSize = (uint)(64 + 64 + image.Count);
                 ImgWidth = width;
                 ImgHeight = height;
-                MagicNum = 0x03584D5F;
-                Flag = 0x00002;
+                MagicNum = 0x30584D54;
+                Flag = 0x00001;
 
-                AlwaysFF00 = 0xFF00;
+                AlwaysFF000000 = 0xFF000000;
                 Palette = new Colour[16];
                 for (int i = 0; i < 16; i++)
                 {
@@ -94,8 +94,8 @@ namespace DungeonBuilder.modules.file_formats
                 int name_size = 32;
                 uint file_size = texture.FileSize;
                 name_size -= texture.Name.Length;
-                writer.Write(texture.Name);
-                for (int i = 1; i < name_size; i++)
+                writer.Write(Encoding.ASCII.GetBytes(texture.Name));
+                for (int i = 0; i < name_size; i++)
                 {
                     writer.Write(false);
                 }
@@ -110,9 +110,8 @@ namespace DungeonBuilder.modules.file_formats
                 writer.Write(texture.Flag);
                 writer.Write(texture.ImgWidth);
                 writer.Write(texture.ImgHeight);
-                writer.Write((short)0);
-                writer.Write(texture.AlwaysFF00);
-                writer.Write((short)0);
+                writer.Write((short)0x0014);
+                writer.Write(texture.AlwaysFF000000);
                 // used 28 of 64 header bytes, need to fill out the rest.
                 for (int i = 0; i < 9; i++)
                 {
@@ -123,8 +122,10 @@ namespace DungeonBuilder.modules.file_formats
                     writer.Write(color.Red);
                     writer.Write(color.Green);
                     writer.Write(color.Blue);
-                    writer.Write(color.Alpha);
+                    writer.Write((byte)Math.Round((double)color.Alpha/2));
                 }
+                // Wrote out 2 64-byte sections
+                file_size -= 128;
                 foreach (byte entry in texture.Data)
                 {
                     writer.Write(entry);
@@ -152,7 +153,7 @@ namespace DungeonBuilder.modules.file_formats
             image.Save(img_data);
             img_data.Seek(0, SeekOrigin.Begin);
             SkiaSharp.SKBitmap local_bitmap = SKBitmap.Decode(img_data, new SKImageInfo(image.PixelSize.Width, 
-                                                              image.PixelSize.Height, SKColorType.Bgra8888));
+                                                              image.PixelSize.Height));
             
             for (int x = 0; x < width; x++)
             {
@@ -166,20 +167,20 @@ namespace DungeonBuilder.modules.file_formats
                     }
                 }
             }
-            for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
             {
-                for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
                 {
                     if (UpperBit)
                     {
-                        value |= (byte)( (paletteDict[local_bitmap.GetPixel(x, y)] << 4) & 0xF0);
+                        value |= (byte)((paletteDict[local_bitmap.GetPixel(x, y)] << 4) & 0xF0);
                         img_contents.Add(value);
                         value = 0;
                         UpperBit = false;
                     }
                     else
                     {
-                        value |= (byte)( paletteDict[local_bitmap.GetPixel(x, y)] & 0xF) ;
+                        value |= (byte)(paletteDict[local_bitmap.GetPixel(x, y)] & 0xF);
                         UpperBit = true;
                     }
                 }

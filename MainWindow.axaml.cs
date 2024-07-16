@@ -299,6 +299,8 @@ namespace DungeonBuilder
                     string png_path = Path.Combine(current_project_path, "minimap_tiles");
                     foreach (var entry in _minimap)
                     {
+                        _minimapTiles[entry.name].Save(Path.Combine(png_path, entry.name.Replace(".tmx", ".png")));
+                        TMXHandler.CreateTMX(_minimapTiles[entry.name], entry.name);
                         if (entry.multipleNames)
                         {
                             foreach (var name in entry.names)
@@ -307,14 +309,9 @@ namespace DungeonBuilder
                                 TMXHandler.CreateTMX(_minimapTiles[name], name);
                             }
                         }
-                        else
-                        {
-                            _minimapTiles[entry.name].Save(Path.Combine(png_path, entry.name.Replace(".tmx", ".png")));
-                            TMXHandler.CreateTMX(_minimapTiles[entry.name], entry.name);
-                        }
                     }
                     BinaryWriter smapbin = new(File.OpenWrite(Path.Combine(current_project_path, "fld_smap.bin")));
-                    
+
                     TMXHandler.WriteSmap(smapbin);
                 }
             }
@@ -371,9 +368,16 @@ namespace DungeonBuilder
             {
                 if (tile.multipleNames)
                 {
+                    if (!_minimapTiles.ContainsKey(tile.name))
+                    {
+                        // smap00.png is a filler image, never accessed but needed (for now)
+                        // to maintain order with how the game handles minimap textures
+                        file_name = "smap00.png";
+                        currentImage = new Bitmap(AssetLoader.Open(new Uri("avares://P4G-Dungeon-Editor/Assets/minimap_tiles/smap00.png")));
+                        _minimapTiles.Add(tile.name, currentImage);
+                    }
                     foreach (string name in tile.names)
                     {
-
                         if (!_minimapTiles.ContainsKey(name))
                         {
                             file_name = name.Replace(".tmx", ".png");
@@ -403,11 +407,17 @@ namespace DungeonBuilder
             path = current_project_path+"/minimap_tiles/";
             foreach (DungeonMinimap tile in _minimap)
             {
+                if (!_minimapTiles.ContainsKey(tile.name))
+                {
+                    // smap00.png is a filler image, never accessed but needed (for now)
+                    // to maintain order with how the game handles minimap textures
+                    currentImage = new Bitmap(AssetLoader.Open(new Uri("avares://P4G-Dungeon-Editor/Assets/minimap_tiles/smap00.png")));
+                    _minimapTiles.Add(tile.name, currentImage);
+                }
                 if (tile.multipleNames)
                 {
                     foreach (string name in tile.names)
                     {
-
                         if (!_minimapTiles.ContainsKey(name))
                         {
                             file_name = name.Replace(".tmx", ".png");
