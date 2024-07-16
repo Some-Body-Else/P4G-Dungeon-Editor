@@ -119,7 +119,7 @@ namespace DungeonBuilder
                 lastEncountID = 0;
                 lastEncountTableID = 0;
                 lastLootID = 0;
-                lastMinimapID = 1;
+                lastMinimapID = 0;
                 lastMinimapNameID = 0;
                 lastRoomDataID = 0;
                 lastFloorID = 0;

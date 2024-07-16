@@ -47,6 +47,82 @@
 	  <None Remove="Assets\minimap_tiles\smap01.png" />
 	</ItemGroup>
 
+
+	<ItemGroup>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap00.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap02_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap02_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap03.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap04.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap05.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap06.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap07.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap08.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap09_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap09_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap10_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap10_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap11_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap11_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap12_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap12_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap13_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap13_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap13_03..png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap14_01.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap14_02.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	  <AvaloniaResource Update="Assets\minimap_tiles\smap14_03.png">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </AvaloniaResource>
+	</ItemGroup>
+
 	<ItemGroup>
 	  <None Update="JSON\dungeon_floors.json">
 	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
