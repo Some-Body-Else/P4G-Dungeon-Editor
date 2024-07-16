@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 
 
-namespace DungeonBuilder.modules.menu_objects
+namespace DungeonBuilder.modules.window_objects
 {
     public class EncounterMenu
     {

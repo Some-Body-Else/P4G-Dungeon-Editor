@@ -6,7 +6,7 @@ using System;
 
 using DungeonBuilder.modules.internal_objects;
 using System.IO;
-using DungeonBuilder.modules.menu_objects;
+using DungeonBuilder.modules.window_objects;
 
 using System.Text.Json;
 using Avalonia.Controls.Primitives;
@@ -19,14 +19,21 @@ using System.Text;
 using System.Net.Http.Json;
 using System.Diagnostics.Metrics;
 using Avalonia;
-using static DungeonBuilder.modules.menu_objects.LootTableMenu;
+using static DungeonBuilder.modules.window_objects.LootTableMenu;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
-using System.Security.Cryptography.X509Certificates;
 
+using Rectangle = Avalonia.Controls.Shapes.Rectangle;
+using HorizontalAlignment = Avalonia.Layout.HorizontalAlignment;
+using VerticalAlignment = Avalonia.Layout.VerticalAlignment;
+using Path = System.IO.Path;
+using Avalonia.Controls.Shapes;
+using Avalonia.Logging;
+using DungeonBuilder.modules.file_formats;
+using System.Xml.Linq;
 
 namespace DungeonBuilder
 {
@@ -36,24 +43,10 @@ namespace DungeonBuilder
         public byte value = 0;
     }
 
-    public partial class FileLoadWindow : Window
+    public class MapCoordSelect : Rectangle
     {
-        private ProgressBar progress;
-        public FileLoadWindow(int filecount)
-        {
-            progress = new();
-            progress.SetValue(ProgressBar.MinimumProperty, 0);
-            progress.SetValue(ProgressBar.MaximumProperty, filecount);
-            progress.SetValue(ProgressBar.ValueProperty, 0);
-            progress.SetValue(ProgressBar.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-            progress.SetValue(ProgressBar.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
-        }
-        public void AddProgress()
-        {
-            progress.Value++;
-        }
-    }
 
+    }
 
     public partial class MainWindow : Window
     {
@@ -61,6 +54,7 @@ namespace DungeonBuilder
         EncounterTableMenu _encounterTableMenu;
         LootTableMenu _lootTableMenu;
         RoomDataMenu _roomDataMenu;
+        MinimapMenu _minimapMenu;
         FloorMenu _floorMenu;
         TemplateMenu _templateMenu;
 
@@ -71,30 +65,40 @@ namespace DungeonBuilder
         List<DungeonFloor> _floors;
         List<DungeonRoom> _rooms;
         List<DungeonMinimap> _minimap;
+        Dictionary<string, Bitmap> _minimapTiles;
         Dictionary<byte, byte> _dungeon_template_dict;
 
         bool project_loaded = false;
         int lastEncountID;
         int lastEncountTableID;
         int lastLootID;
+        int lastMinimapID;
+        int lastMinimapNameID;
         int lastRoomDataID;
         int lastFloorID;
         int lastTemplateID;
         string current_project_path;
+        double cellsizeX;
+        double cellsizeY;
+        double rot;
         RadioButton ActiveButton;
-        List<int> colors = new List<int>() 
+        
+        List<int> tile_colors = new List<int>() 
         { 0xFFFFFF, 0xFFA88D, 0x896AA7, 0xA3B5FD, 0x75CBE7, 0x7FBDAF, 0xEE7179, 0xF6DA6F,
           0xFFFFFF/2, 0xFFA88D/2, 0x896AA7/2, 0xA3B5FD/2, 0x75CBE7/2, 0x7FBDAF/2, 0xEE7179/2, 0xF6DA6F/2,};
+        List<IBrush> palette = new List<IBrush> { Brush.Parse("#FEE117"), Brush.Parse("#FFEB18"), Brush.Parse("#EEDB15"),
+                                                  Brush.Parse("#FFB403"), Brush.Parse("#646464"), Brush.Parse("#3D3D3D") };
 
-        public static FilePickerFileType ENCOUNT_TBL { get; } = new("ENCOUNT_TBL")
+        public static FilePickerFileType MinimapTile { get; } = new("Minimap tile image")
         {
-            Patterns = ["*.TBL"],
-            // Figure out these two for ENCOUNT.TBL, currently unknown
+            Patterns = ["*.png"],
             AppleUniformTypeIdentifiers = ["public.image"],
             MimeTypes = ["image/*"]
         };
         public MainWindow()
         {
+            Logger.TryGet(LogEventLevel.Fatal, LogArea.Control)?.Log(this, "Avalonia Infrastructure");
+
             InitializeComponent();
 
             AddHandler(DragDrop.DropEvent, Drop);
@@ -106,22 +110,17 @@ namespace DungeonBuilder
         }
         private async void HandleProjectMenuItemClick(object sender, RoutedEventArgs e)
         {
-            FileLoadWindow loading = new(8);
-            loading.Closing += (s, e) => { 
-                // e.Cancel = true; 
-            };
-            loading.Height = 240;
-            loading.Width = 360;
 
             if (sender == NewProjectButton)
             {
                 // Setup a crapton of internal classes to keep everything in check here
                 // Need all of the default data in place
-
-                loading.ShowDialog(this);
+                current_project_path = "";
                 lastEncountID = 0;
                 lastEncountTableID = 0;
                 lastLootID = 0;
+                lastMinimapID = 1;
+                lastMinimapNameID = 0;
                 lastRoomDataID = 0;
                 lastFloorID = 0;
                 lastTemplateID = 0;
@@ -132,10 +131,11 @@ namespace DungeonBuilder
                 // Room model menu here, when we get to it
                 _roomDataMenu = new();
                 _floorMenu = new();
+                _minimapMenu = new();
                 _templateMenu = new();
                 _dungeon_template_dict = new();
 
-                LoadJSON(Path.GetFullPath("JSON"), loading);
+                LoadJSON(Path.GetFullPath("JSON"));
 
                 project_loaded = true;
 
@@ -146,13 +146,16 @@ namespace DungeonBuilder
                 {
                     ActiveButton.IsChecked = false;
                 }
+                SetupMinimapTileDictionaryNew();
+                TMXHandler.Initialize();
+
                 ActiveGrid.RowDefinitions.Clear();
                 ActiveGrid.ColumnDefinitions.Clear();
                 ActiveGrid.Children.Clear();
-                ActiveGrid.SetValue(Grid.BackgroundProperty, Brush.Parse("#24BCC1"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
                 Label success = new();
-                success.SetValue(Label.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                success.SetValue(Label.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                success.SetValue(Label.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                success.SetValue(Label.VerticalAlignmentProperty, VerticalAlignment.Center);
                 success.SetValue(Label.ContentProperty, "New project started! Select a button on the left to start editing.");
                 ActiveGrid.Children.Add(success);
             }
@@ -165,13 +168,14 @@ namespace DungeonBuilder
                 });
                 if (folder.Count > 0)
                 {
-                    loading.ShowDialog(this);
-                    var current_project_path = folder[0].Path;
+                    current_project_path = folder[0].Path.LocalPath.ToString();
 
                     lastEncountID = 0;
                     lastEncountTableID = 0;
                     lastLootID = 0;
                     lastRoomDataID = 0;
+                    lastMinimapID = 0;
+                    lastMinimapNameID = 0;
                     lastFloorID = 0;
                     lastTemplateID = 0;
 
@@ -180,11 +184,12 @@ namespace DungeonBuilder
                     _lootTableMenu = new();
                     // Room model menu here, when we get to it
                     _roomDataMenu = new();
+                    _minimapMenu = new();
                     _floorMenu = new();
                     _templateMenu = new();
                     _dungeon_template_dict = new();
-                    
-                    LoadJSON(current_project_path.LocalPath.ToString(), loading);
+
+                    LoadJSON(Path.GetFullPath("JSON"));
 
 
                     project_loaded = true;
@@ -195,13 +200,16 @@ namespace DungeonBuilder
                     {
                         ActiveButton.IsChecked = false;
                     }
+                    SetupMinimapTileDictionaryLoad();
+                    TMXHandler.Initialize();
+
                     ActiveGrid.RowDefinitions.Clear();
                     ActiveGrid.ColumnDefinitions.Clear();
                     ActiveGrid.Children.Clear();
-                    ActiveGrid.SetValue(Grid.BackgroundProperty, Brush.Parse("#24BCC1"));
+                    ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
                     Label success = new();
-                    success.SetValue(Label.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                    success.SetValue(Label.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                    success.SetValue(Label.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                    success.SetValue(Label.VerticalAlignmentProperty, VerticalAlignment.Center);
                     success.SetValue(Label.ContentProperty, "Project loaded!");
                     ActiveGrid.Children.Add(success);
                 }
@@ -215,24 +223,21 @@ namespace DungeonBuilder
                 });
                 if (folder.Count > 0)
                 {
-                    loading.ShowDialog(this);
-                    var current_project_path = folder[0].Path;
+                    current_project_path = folder[0].Path.LocalPath.ToString();
 
                     var serializeOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
                                                                        WriteIndented = true };
 
                     string jsonContents = JsonSerializer.Serialize(_floors, serializeOptions);
                     jsonContents.Replace("\u0027", "'");
-                    var writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_floors.json"));
+                    var writer = File.Create(Path.Combine(current_project_path, "dungeon_floors.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_dungeon_template_dict, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_template_dict.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "dungeon_template_dict.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     foreach (DungeonRoom room in _rooms)
                     {
@@ -261,70 +266,77 @@ namespace DungeonBuilder
                     }
 
                     jsonContents = JsonSerializer.Serialize(_rooms, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_rooms.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "dungeon_rooms.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_templates, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_templates.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "dungeon_templates.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_minimap, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "dungeon_minimap.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "dungeon_minimap.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_enemyEncounters, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "encounters.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "encounters.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_floorEncounters, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "encounter_tables.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "encounter_tables.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
                     jsonContents = JsonSerializer.Serialize(_lootTables, serializeOptions);
-                    writer = File.Create(Path.Combine(current_project_path.LocalPath.ToString(), "loot_tables.json"));
+                    writer = File.Create(Path.Combine(current_project_path, "loot_tables.json"));
                     writer.Write(Encoding.UTF8.GetBytes(jsonContents));
                     writer.Close();
-                    loading.AddProgress();
 
-
-                    // writer.Close();
+                    Directory.CreateDirectory(Path.Combine(current_project_path, "minimap_tiles"));
+                    string png_path = Path.Combine(current_project_path, "minimap_tiles");
+                    foreach (var entry in _minimap)
+                    {
+                        if (entry.multipleNames)
+                        {
+                            foreach (var name in entry.names)
+                            {
+                                _minimapTiles[name].Save(Path.Combine(png_path, name.Replace(".tmx", ".png")));
+                                TMXHandler.CreateTMX(_minimapTiles[name], name);
+                            }
+                        }
+                        else
+                        {
+                            _minimapTiles[entry.name].Save(Path.Combine(png_path, entry.name.Replace(".tmx", ".png")));
+                            TMXHandler.CreateTMX(_minimapTiles[entry.name], entry.name);
+                        }
+                    }
+                    BinaryWriter smapbin = new(File.OpenWrite(Path.Combine(current_project_path, "fld_smap.bin")));
+                    
+                    TMXHandler.WriteSmap(smapbin);
                 }
-
             }
-            loading.Close();
         }
-        private void LoadJSON(string path, FileLoadWindow loading)
+        private void LoadJSON(string path)
         {
 
             StreamReader jsonStream = new StreamReader(Path.Combine(path, "dungeon_floors.json"));
             string jsonContents = jsonStream.ReadToEnd();
             _floors = JsonSerializer.Deserialize<List<DungeonFloor>>(jsonContents)!;
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "dungeon_rooms.json"));
             jsonContents = jsonStream.ReadToEnd();
             _rooms = JsonSerializer.Deserialize<List<DungeonRoom>>(jsonContents)!;
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "dungeon_minimap.json"));
             jsonContents = jsonStream.ReadToEnd();
             _minimap = JsonSerializer.Deserialize<List<DungeonMinimap>>(jsonContents)!;
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "dungeon_templates.json"));
             jsonContents = jsonStream.ReadToEnd();
             _templates = JsonSerializer.Deserialize<List<DungeonTemplates>>(jsonContents)!;
-            loading.AddProgress();
 
             Dictionary<string, byte> temp;
             jsonStream = new StreamReader(Path.Combine(path, "dungeon_template_dict.json"));
@@ -334,22 +346,86 @@ namespace DungeonBuilder
             {
                 _dungeon_template_dict.Add(Byte.Parse(key), temp[key]);
             }
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "encounters.json"));
             jsonContents = jsonStream.ReadToEnd();
             _enemyEncounters = JsonSerializer.Deserialize<List<EnemyEncounter>>(jsonContents)!;
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "encounter_tables.json"));
             jsonContents = jsonStream.ReadToEnd();
             _floorEncounters = JsonSerializer.Deserialize<List<FloorEncounter>>(jsonContents)!;
-            loading.AddProgress();
 
             jsonStream = new StreamReader(Path.Combine(path, "loot_tables.json"));
             jsonContents = jsonStream.ReadToEnd();
             _lootTables = JsonSerializer.Deserialize<List<LootTable>>(jsonContents)!;
-            loading.AddProgress();
+        }
+        private void SetupMinimapTileDictionaryNew()
+        {
+            string path;
+            string file_name;
+            Bitmap currentImage;
+            _minimapTiles = new();
+            // Loaded a new project file, use defaults
+            path = "avares://P4G-Dungeon-Editor/Assets/minimap_tiles/";
+            foreach (DungeonMinimap tile in _minimap)
+            {
+                if (tile.multipleNames)
+                {
+                    foreach (string name in tile.names)
+                    {
+
+                        if (!_minimapTiles.ContainsKey(name))
+                        {
+                            file_name = name.Replace(".tmx", ".png");
+                            currentImage = new Bitmap(AssetLoader.Open(new Uri(path+file_name)));
+                            _minimapTiles.Add(name, currentImage);
+                        }
+                    }
+                }
+                else
+                {
+                    if (!_minimapTiles.ContainsKey(tile.name))
+                    {
+                        file_name = tile.name.Replace(".tmx", ".png");
+                        currentImage = new Bitmap(AssetLoader.Open(new Uri(path+file_name)));
+                        _minimapTiles.Add(tile.name, currentImage);
+                    }
+                }
+            }
+        }
+        private void SetupMinimapTileDictionaryLoad()
+        {
+            string path;
+            string file_name;
+            Bitmap currentImage;
+            _minimapTiles = new();
+            // Loaded a new project file, use defaults
+            path = current_project_path+"/minimap_tiles/";
+            foreach (DungeonMinimap tile in _minimap)
+            {
+                if (tile.multipleNames)
+                {
+                    foreach (string name in tile.names)
+                    {
+
+                        if (!_minimapTiles.ContainsKey(name))
+                        {
+                            file_name = name.Replace(".tmx", ".png");
+                            currentImage = new Bitmap(File.OpenRead(path+file_name));
+                            _minimapTiles.Add(name, currentImage);
+                        }
+                    }
+                }
+                else
+                {
+                    if (!_minimapTiles.ContainsKey(tile.name))
+                    {
+                        file_name = tile.name.Replace(".tmx", ".png");
+                        currentImage = new Bitmap(File.OpenRead(path+file_name));
+                        _minimapTiles.Add(tile.name, currentImage);
+                    }
+                }
+            }
         }
         private void HandleAreaRadioButtonClick(object sender, RoutedEventArgs e)
         {
@@ -380,7 +456,7 @@ namespace DungeonBuilder
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#3330a0"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
 
                 InnerGrid = new();
@@ -395,8 +471,9 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
                 addsub.Content = "+";
                 addsub.Click += AddEncounterEntry;
@@ -404,8 +481,9 @@ namespace DungeonBuilder
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
                 addsub.Content = "-";
                 addsub.Click += RemoveEncounterEntry;
@@ -426,9 +504,9 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.Child = EncountSelector;
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#150F80") );
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f") );
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10") );
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8") );
                 InnerGrid.Children.Add(ItemOutline);
@@ -445,8 +523,8 @@ namespace DungeonBuilder
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#150F80"));
-                ItemOutline.SetValue(Border.MarginProperty, Thickness.Parse("5 0 5 0"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
+                ItemOutline.SetValue(Border.MarginProperty, Thickness.Parse("5 0 5 5"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -472,14 +550,14 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3"));
                             ItemContainer.Children.Add(ItemOutline);
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Unit "+(i+1));
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 64);
@@ -504,7 +582,7 @@ namespace DungeonBuilder
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 1);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#150F80"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
                 ItemOutline.SetValue(Border.MarginProperty, Thickness.Parse("5 0 5 0"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid2.Children.Add(ItemOutline);
@@ -531,13 +609,13 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Flags");
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 72);
@@ -565,13 +643,13 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Music ID");
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 72);
@@ -598,13 +676,13 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Field ID");
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 72);
@@ -632,12 +710,12 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Room ID");
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 72);
@@ -665,13 +743,13 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(DockPanel.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(DockPanel.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Field04");
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
                                 Identifier.SetValue(TextBlock.WidthProperty, 72);
@@ -699,13 +777,13 @@ namespace DungeonBuilder
                         ItemOutline.Child = ItemContainer;
 
                             ItemOutline = new();
-                            ItemOutline.SetValue(DockPanel.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                            ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#990046"));
+                            ItemOutline.SetValue(DockPanel.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                            ItemOutline.SetValue(Border.BorderBrushProperty, palette[2]);
                             ItemOutline.SetValue(Border.BorderThicknessProperty, Thickness.Parse("3") );
 
                                 Identifier = new();
                                 Identifier.SetValue(TextBlock.PaddingProperty, Thickness.Parse("10 20 10 0"));
-                                Identifier.SetValue(TextBlock.BackgroundProperty, BrushColor.ConvertFrom("#BF0045"));
+                                Identifier.SetValue(TextBlock.BackgroundProperty, palette[1]);
                                 Identifier.SetValue(TextBlock.TextProperty, "Field06");
 
                                 Identifier.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
@@ -729,7 +807,7 @@ namespace DungeonBuilder
                 MaskedTextBox WritableTextbox;
                 ActiveGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#65379E"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
                 InnerGrid = new();
                 InnerGrid.SetValue(Grid.RowProperty, 0);
@@ -740,14 +818,14 @@ namespace DungeonBuilder
 
                 ToggleButton button = new();
                 button.SetValue(Grid.ColumnProperty, 0);
-                button.SetValue(ToggleButton.BackgroundProperty, BrushColor.ConvertFrom("#990DDA"));
+                button.SetValue(ToggleButton.BackgroundProperty, palette[1]);
                 button.SetValue(ToggleButton.CornerRadiusProperty, CornerRadius.Parse("8"));
                 button.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("60 15"));
-                button.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
-                button.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
+                button.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Stretch);
+                button.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
                 button.SetValue(ToggleButton.ContentProperty, "Is Raining");
-                button.SetValue(ToggleButton.VerticalContentAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
-                button.SetValue(ToggleButton.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                button.SetValue(ToggleButton.VerticalContentAlignmentProperty, VerticalAlignment.Center);
+                button.SetValue(ToggleButton.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 button.IsCheckedChanged += ChangeEncounterTableData;
                 _encounterTableMenu.IsRainy = button;
                 InnerGrid.Children.Add(button);
@@ -764,18 +842,20 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "+";
                 addsub.Click += AddFloorEncounterTable;
                 InnerGrid2.Children.Add(addsub);
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "-";
                 addsub.Click += RemoveFloorEncounterTable;
                 InnerGrid2.Children.Add(addsub);
@@ -783,9 +863,9 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#320368"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid2.Children.Add(ItemOutline);
@@ -805,8 +885,9 @@ namespace DungeonBuilder
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 1);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#320368"));
-                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("5"));
+                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("5"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 ActiveGrid.Children.Add(ItemOutline);
 
@@ -827,7 +908,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -854,7 +935,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 2);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -879,7 +960,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 4);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -904,7 +985,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -931,7 +1012,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnProperty, 2);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -956,7 +1037,7 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnProperty, 4);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5212AA"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid.Children.Add(ItemOutline);
 
@@ -1002,17 +1083,17 @@ namespace DungeonBuilder
                     if (counter < 20)
                     {
                         // Regular encounter selection
-                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#6D6D6D"));
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, palette[4]);
                     }
                     else if (counter < 25)
                     {
                         // Rare encounter selection
-                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#AD1C0F"));
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, Brush.Parse("#AD1C0F"));
                     }
                     else
                     {
                         // Gold hand encounter selection
-                        InnerGrid2.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#AA8708"));
+                        InnerGrid2.SetValue(Grid.BackgroundProperty, Brush.Parse("#AA8708"));
                     }
                     InnerGrid2.SetValue(MarginProperty, Thickness.Parse("0 5"));
                     for (int j = 0; j < 5; j++)
@@ -1111,7 +1192,7 @@ namespace DungeonBuilder
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#F99C03"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
                 InnerGrid = new();
                 InnerGrid.SetValue(Grid.RowProperty, 0);
@@ -1125,18 +1206,20 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "+";
                 addsub.Click += AddLootTable;
                 InnerGrid.Children.Add(addsub);
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "-";
                 addsub.Click += RemoveLootTable;
                 InnerGrid.Children.Add(addsub);
@@ -1145,9 +1228,9 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#CC7D00"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 // https://docs.avaloniaui.net/docs/reference/controls/numericupdown
@@ -1167,7 +1250,7 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnSpanProperty, 2);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#CC7D00"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("3"));
@@ -1186,11 +1269,11 @@ namespace DungeonBuilder
                     InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                     if (i % 2 == 0)
                     {
-                        InnerGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#19CDCA"));
+                        InnerGrid.SetValue(Grid.BackgroundProperty, palette[1]);
                     }
                     else
                     {
-                        InnerGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#C50000"));
+                        InnerGrid.SetValue(Grid.BackgroundProperty, palette[2]);
                     }
 
 
@@ -1278,8 +1361,8 @@ namespace DungeonBuilder
 
                     // Might want to swap later
                     ChestTypeToggle.IsChecked = _lootTables[lastLootID].LootEntries[i].ChestModel > 0;
-                    ChestTypeToggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                    ChestTypeToggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                    ChestTypeToggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                    ChestTypeToggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Center);
                     ChestTypeToggle.SetValue(ToggleButton.MarginProperty, Thickness.Parse("0 0 0 3"));
                     // ChestTypeToggle.SetValue(ToggleButton.NameProperty, "BigChest");
                     ChestTypeToggle.Click += ChangeLootTableData;
@@ -1312,9 +1395,7 @@ namespace DungeonBuilder
                 ActiveGrid.ColumnDefinitions.Add(new(30, GridUnitType.Star));
                 ActiveGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#005127"));
-
-
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
                 InnerGrid = new();
                 InnerGrid.SetValue(Grid.ColumnProperty, 0);
@@ -1335,18 +1416,20 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "+";
                 addsub.Click += AddRoom;
                 InnerGrid2.Children.Add(addsub);
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "-";
                 addsub.Click += RemoveRoom;
                 InnerGrid2.Children.Add(addsub);
@@ -1356,9 +1439,9 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#003D1C"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid2.Children.Add(ItemOutline);
@@ -1405,7 +1488,7 @@ namespace DungeonBuilder
                 RoomSelector.ValueChanged += ChangeRoomData;
                 _roomDataMenu.SizeX = RoomSelector;
                 PairContents.Children.Add(RoomSelector);
-                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, HorizontalAlignment.Center);
                 PairContents.SetValue(Panel.MarginProperty, Avalonia.Thickness.Parse("4"));
                 PairContents2.Children.Add(PairContents);
 
@@ -1423,7 +1506,7 @@ namespace DungeonBuilder
                 RoomSelector.ValueChanged += ChangeRoomData;
                 _roomDataMenu.SizeY = RoomSelector;
                 PairContents.Children.Add(RoomSelector);
-                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, HorizontalAlignment.Center);
                 PairContents.SetValue(Panel.MarginProperty, Avalonia.Thickness.Parse("4"));
                 PairContents2.Children.Add(PairContents);
 
@@ -1434,7 +1517,7 @@ namespace DungeonBuilder
                 PairContents.SetValue(Grid.RowProperty, 2);
                 PlainText = new();
                 Toggle = new();
-                PlainText.Text = "Has Door";
+                PlainText.Text = "Has Doors";
                 Toggle.Content = PlainText;
                 Toggle.SetValue(NumericUpDown.NameProperty, "HasDoor");
                 _roomDataMenu.HasDoor = Toggle;
@@ -1450,13 +1533,13 @@ namespace DungeonBuilder
                 Toggle.IsChecked =_rooms[lastRoomDataID].isExit;
                 Toggle.IsCheckedChanged+=ChangeRoomData;
                 PairContents.Children.Add(Toggle);
-                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                PairContents.SetValue(StackPanel.HorizontalAlignmentProperty, HorizontalAlignment.Center);
                 PairContents.SetValue(Panel.MarginProperty, Avalonia.Thickness.Parse("4"));
                 InnerGrid.Children.Add(PairContents);
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 4);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#6A966E"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
                 ItemOutline.SetValue(Border.HeightProperty, 160);
                 ItemOutline.SetValue(Border.WidthProperty, 160);
                 ItemOutline.SetValue(Border.PaddingProperty, Thickness.Parse("8 8 0 8"));
@@ -1476,7 +1559,7 @@ namespace DungeonBuilder
                 OutlineGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 OutlineGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
                 OutlineGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
-                OutlineGrid.SetValue(UniformGrid.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                OutlineGrid.SetValue(UniformGrid.HorizontalAlignmentProperty, HorizontalAlignment.Center);
                 // OutlineGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 CheckBox outline_property;
                 for (int i = 0; i < OutlineGrid.RowDefinitions.Count; i++)
@@ -1509,7 +1592,7 @@ namespace DungeonBuilder
                 ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#751600"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
                 InnerGrid = new();
                 InnerGrid.SetValue(Grid.RowProperty, 0);
@@ -1523,18 +1606,20 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "+";
                 addsub.Click += AddFloorEntry;
                 InnerGrid.Children.Add(addsub);
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "-";
                 addsub.Click += RemoveFloorEntry;
                 InnerGrid.Children.Add(addsub);
@@ -1543,9 +1628,9 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#4B0200"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 NumericUpDown FloorSelector = new();
@@ -1565,9 +1650,9 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#4B0200"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 WritableTextbox = new();
@@ -1584,9 +1669,9 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#4B0200"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#6A211F"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid = new();
@@ -1759,9 +1844,9 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.RowProperty, 1);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#4B0200"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#6A211F"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[2]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid = new();
@@ -1883,7 +1968,7 @@ namespace DungeonBuilder
                 ActiveGrid.RowDefinitions.Add(new(2, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
                 ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
-                ActiveGrid.SetValue(Grid.BackgroundProperty, BrushColor.ConvertFrom("#BAA000"));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
 
                 InnerGrid = new();
                 InnerGrid.SetValue(Grid.RowProperty, 0);
@@ -1897,18 +1982,20 @@ namespace DungeonBuilder
                 Button addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 0);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 10 0 0"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "+";
                 addsub.Click += AddTemplateEntry;
                 InnerGrid.Children.Add(addsub);
                 addsub = new();
                 addsub.SetValue(Grid.ColumnProperty, 0);
                 addsub.SetValue(Grid.RowProperty, 1);
-                addsub.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                addsub.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
+                addsub.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                addsub.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
                 addsub.SetValue(Button.MarginProperty, Thickness.Parse("0 0 0 10"));
+                addsub.SetValue(Button.BackgroundProperty, palette[3]);
                 addsub.Content = "-";
                 addsub.Click += RemoveTemplateEntry;
                 InnerGrid.Children.Add(addsub);
@@ -1918,9 +2005,9 @@ namespace DungeonBuilder
                 ItemOutline.SetValue(Grid.RowSpanProperty, 2);
                 ItemOutline.SetValue(Grid.RowProperty, 0);
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
-                ItemOutline.SetValue(Border.BorderBrushProperty, BrushColor.ConvertFrom("#827000"));
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
                 ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#5f5f0f"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 NumericUpDown TemplateSelector = new();
@@ -1944,7 +2031,7 @@ namespace DungeonBuilder
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#E0C100"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid = new();
@@ -1961,21 +2048,21 @@ namespace DungeonBuilder
                 WrapPanel panel1 = new();
                 view1.SetValue(Grid.RowProperty, 0);
                 view1.SetValue(Grid.ColumnProperty, 0);
-                panel1.SetValue(Panel.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                panel1.SetValue(Panel.BackgroundProperty, palette[1]);
                 panel1.SetValue(Panel.NameProperty, "UsedRooms");
                 ScrollViewer view2 = new();
                 WrapPanel panel2 = new();
                 view2.SetValue(Grid.RowProperty, 1);
                 view2.SetValue(Grid.ColumnProperty, 0);
                 view2.SetValue(Grid.ColumnSpanProperty, 2);
-                panel2.SetValue(Panel.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                panel2.SetValue(Panel.BackgroundProperty, palette[1]);
                 panel2.SetValue(Panel.NameProperty, "UnusedRooms");
 
                 ScrollViewer view3 = new();
                 WrapPanel panel3 = new();
                 view3.SetValue(Grid.RowProperty, 0);
                 view3.SetValue(Grid.ColumnProperty, 1);
-                panel3.SetValue(Panel.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                panel3.SetValue(Panel.BackgroundProperty, palette[1]);
                 
                 panel3.SetValue(Panel.NameProperty, "UsedRoomsEx");
 
@@ -1987,7 +2074,7 @@ namespace DungeonBuilder
 
                 ItemOutline = new();
                 ItemOutline.SetValue(Grid.ColumnProperty, 1);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#E0C100"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
                 InnerGrid = new();
@@ -2000,12 +2087,12 @@ namespace DungeonBuilder
                 ScrollViewer view5 = new();
                 WrapPanel panel5 = new();
                 view5.SetValue(Grid.RowProperty, 0);
-                panel5.SetValue(Panel.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                panel5.SetValue(Panel.BackgroundProperty, palette[2]);
                 panel5.SetValue(Panel.NameProperty, "UsedExit");
                 ScrollViewer view6 = new();
                 WrapPanel panel6 = new();
                 view6.SetValue(Grid.RowProperty, 1);
-                panel6.SetValue(Panel.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                panel6.SetValue(Panel.BackgroundProperty, palette[2]);
                 panel6.SetValue(Panel.NameProperty, "UnusedExit");
 
                 InnerGrid.Children.Add(view5);
@@ -2086,7 +2173,7 @@ namespace DungeonBuilder
                 ItemOutline = new();
                 InnerGrid.Children.Add(ItemOutline);
                 ItemOutline.SetValue(Grid.ColumnProperty, 0);
-                ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#EFA422"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
                 ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
                 ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("6"));
                 panel1 = new();
@@ -2116,18 +2203,18 @@ namespace DungeonBuilder
                 button = new();
                 button.Content = "+";
                 button.SetValue(StackPanel.MarginProperty, Avalonia.Thickness.Parse("4"));
-                button.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                button.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                button.SetValue(Button.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                button.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                button.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
+                button.SetValue(Button.VerticalAlignmentProperty, VerticalAlignment.Center);
                 button.Click+=AddToTemplateDict;
                 PairContents2.Children.Add(button);
 
                 button = new();
                 button.Content = "-";
                 button.SetValue(StackPanel.MarginProperty, Avalonia.Thickness.Parse("4"));
-                button.SetValue(Button.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                button.SetValue(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                button.SetValue(Button.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                button.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                button.SetValue(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center);
+                button.SetValue(Button.VerticalAlignmentProperty, VerticalAlignment.Center);
                 button.Click+=RemoveFromTemplateDict;
                 PairContents2.Children.Add(button);
                 PairContents2.SetValue(StackPanel.OrientationProperty, Avalonia.Layout.Orientation.Horizontal);
@@ -2136,6 +2223,396 @@ namespace DungeonBuilder
                 InnerGrid.Children.Add(PairContents);
 
                 ActiveGrid.Children.Add(InnerGrid);
+
+            }
+            else if (sender == MinimapButton)
+            {
+
+                ActiveGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                ActiveGrid.RowDefinitions.Add(new(5, GridUnitType.Star));
+                ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                ActiveGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                ActiveGrid.SetValue(Grid.BackgroundProperty, palette[0]);
+
+                InnerGrid = new();
+                InnerGrid.SetValue(Grid.RowProperty, 0);
+                InnerGrid.SetValue(Grid.ColumnProperty, 1);
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                ActiveGrid.Children.Add(InnerGrid);
+
+                Button LoadImage = new();
+                LoadImage.SetValue(Grid.RowProperty, 0);
+                LoadImage.SetValue(Grid.ColumnProperty, 0);
+                LoadImage.SetValue(Button.BackgroundProperty, palette[3]);
+                LoadImage.SetValue(Button.VerticalAlignmentProperty, VerticalAlignment.Center);
+                LoadImage.SetValue(Button.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                LoadImage.SetValue(Button.ContentProperty, "Load new minimap image");
+                LoadImage.Click += LoadNewMinimapImage;
+                ActiveGrid.Children.Add(LoadImage);
+
+                NumericUpDown MinimapTileSelector = new();
+                ItemOutline = new();
+                MinimapTileSelector.ValueChanged+=ChangeActiveMinimap;
+                _minimapMenu.MinimapID = MinimapTileSelector;
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, lastMinimapID+1);
+                MinimapTileSelector.SetValue(NumericUpDown.IncrementProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, _minimap.Count);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Right);
+
+                ItemOutline.SetValue(Grid.RowProperty, 0);
+                ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
+                ItemOutline.Child = MinimapTileSelector;
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
+                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("10"));
+                ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("8"));
+                InnerGrid.Children.Add(ItemOutline);
+
+
+                ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 1);
+                ItemOutline.SetValue(Grid.ColumnProperty, 0);
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("2"));
+                ActiveGrid.Children.Add(ItemOutline);
+
+                InnerGrid2 = new();
+                ItemOutline.Child = InnerGrid2;
+                InnerGrid2.RowDefinitions.Add(new(3, GridUnitType.Star));
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+
+                Panel roomBg = new();
+                roomBg.SetValue(Panel.BackgroundProperty, palette[5]);
+                InnerGrid2.Children.Add(roomBg);
+
+
+
+                Bitmap currentImage;
+                Image currentRoom = new();
+                _minimapMenu.CurrentTileTexCoord = currentRoom;
+                roomBg.Children.Add(currentRoom);
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+
+                    if (!_minimapTiles.TryGetValue(_minimap[lastMinimapID].names[lastMinimapNameID], out currentImage))
+                    {
+                        throw new Exception();
+                    }
+                }
+                else
+                {
+                    if (!_minimapTiles.TryGetValue(_minimap[lastMinimapID].name, out currentImage))
+                    {
+                        throw new Exception();
+                    }
+                }
+
+                double img_width = currentImage.Size.Width;
+                double img_height = currentImage.Size.Height;
+
+                currentRoom.SetValue(Grid.RowProperty, 0);
+                currentRoom.SetValue(Image.SourceProperty, currentImage);
+                currentRoom.SetValue(Image.StretchProperty, Stretch.Uniform);
+                currentRoom.SetValue(Grid.ZIndexProperty, 0);
+
+                currentRoom.Loaded += LoadMinimapSectionOutlines;
+
+                Grid minimapOptions = new();
+                minimapOptions.SetValue(Grid.RowProperty, 1);
+                minimapOptions.SetValue(Grid.BackgroundProperty, palette[2]);
+                minimapOptions.RowDefinitions.Add(new(1, GridUnitType.Star));
+                minimapOptions.RowDefinitions.Add(new(1, GridUnitType.Star));
+                minimapOptions.ColumnDefinitions.Add(new(3, GridUnitType.Star));
+                minimapOptions.ColumnDefinitions.Add(new(2, GridUnitType.Star));
+                minimapOptions.ColumnDefinitions.Add(new(2, GridUnitType.Star));
+                InnerGrid2.Children.Add(minimapOptions);
+
+                MinimapTileSelector = new();
+                MinimapTileSelector.ValueChanged+=ChangeMinimapNameID;
+                _minimapMenu.MinimapTileNameSelection = MinimapTileSelector;
+                ItemOutline = new();
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, lastMinimapNameID);
+                MinimapTileSelector.SetValue(NumericUpDown.IncrementProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, _minimap[lastMinimapID].multipleNames ? _minimap[lastMinimapID].names.Count-1 : 0);
+                MinimapTileSelector.SetValue(NumericUpDown.IsEnabledProperty, _minimap[lastMinimapID].multipleNames);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.VerticalContentAlignmentProperty, VerticalAlignment.Center);
+
+                ItemOutline.SetValue(Grid.RowProperty, 0);
+                ItemOutline.SetValue(Grid.ColumnProperty, 0);
+                ItemOutline.SetValue(Grid.RowSpanProperty, 2);
+                ItemOutline.Child = MinimapTileSelector;
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("1"));
+                ItemOutline.SetValue(Border.BackgroundProperty, palette[1]);
+                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("4 20"));
+                ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("3"));
+                minimapOptions.Children.Add(ItemOutline);
+
+                double startx;
+                double endx;
+                double starty;
+                double endy;
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    startx = _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0];
+                    starty = _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1];
+                    endx = _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0];
+                    endy = _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1];
+                }
+                else
+                {
+                    startx = _minimap[lastMinimapID].texCoordSingle[0][0];
+                    starty = _minimap[lastMinimapID].texCoordSingle[0][1];
+                    endx = _minimap[lastMinimapID].texCoordSingle[1][0];
+                    endy = _minimap[lastMinimapID].texCoordSingle[1][1];
+                }
+
+                MinimapTileSelector = new();
+                MinimapTileSelector.ValueChanged+=ChangeMinimapTexCoord;
+                _minimapMenu.MinimapTexCoordStartX = MinimapTileSelector;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 0);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)startx);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 12);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("4 8"));
+                minimapOptions.Children.Add(MinimapTileSelector);
+
+                MinimapTileSelector = new();
+                MinimapTileSelector.ValueChanged+=ChangeMinimapTexCoord;
+                _minimapMenu.MinimapTexCoordEndX = MinimapTileSelector;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 1);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)endx);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 12);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("4 8"));
+                minimapOptions.Children.Add(MinimapTileSelector);
+
+                MinimapTileSelector = new();
+                MinimapTileSelector.ValueChanged+=ChangeMinimapTexCoord;
+                _minimapMenu.MinimapTexCoordStartY = MinimapTileSelector;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 0);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 2);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)starty);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 12);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("4 8"));
+                minimapOptions.Children.Add(MinimapTileSelector);
+
+                MinimapTileSelector = new();
+                MinimapTileSelector.ValueChanged+=ChangeMinimapTexCoord;
+                _minimapMenu.MinimapTexCoordEndY = MinimapTileSelector;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 1);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 2);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)endy);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 12);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("4 8"));
+                minimapOptions.Children.Add(MinimapTileSelector);
+
+
+                ItemOutline = new();
+                ItemOutline.SetValue(Grid.RowProperty, 1);
+                ItemOutline.SetValue(Grid.ColumnProperty, 1);
+                ItemOutline.SetValue(Border.BorderBrushProperty, palette[3]);
+                ItemOutline.SetValue(Border.BorderThicknessProperty, Avalonia.Thickness.Parse("4"));
+                ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("2"));
+                ActiveGrid.Children.Add(ItemOutline);
+
+                InnerGrid2 = new();
+                ItemOutline.Child = InnerGrid2;
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.RowDefinitions.Add(new(4, GridUnitType.Star));
+                InnerGrid2.RowDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                InnerGrid2.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+
+
+                Grid ScaleVisual = new();
+                _minimapMenu.ScaleGridVisual = ScaleVisual;
+                ScaleVisual.SetValue(Grid.RowProperty, 1);
+                ScaleVisual.SetValue(Grid.ColumnSpanProperty, 2);
+                ScaleVisual.SetValue(Grid.ZIndexProperty, 2);
+                ScaleVisual.SetValue(Grid.ShowGridLinesProperty, true);
+                ScaleVisual.SetValue(Grid.WidthProperty, 240);
+                ScaleVisual.SetValue(Grid.HeightProperty, 240);
+                ScaleVisual.SetValue(Grid.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                ScaleVisual.SetValue(Grid.VerticalAlignmentProperty, VerticalAlignment.Bottom);
+                for (int i = 0; i < _rooms[lastMinimapID+1].sizeX; i++)
+                {
+                    ScaleVisual.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                }
+                for (int i = 0; i < _rooms[lastMinimapID+1].sizeY; i++)
+                {
+                    ScaleVisual.RowDefinitions.Add(new(1, GridUnitType.Star));
+                }
+                InnerGrid2.Children.Add(ScaleVisual);
+
+                Grid ScaleMap = new();
+                _minimapMenu.TextureScaleGrid = ScaleMap;
+                ScaleMap.SetValue(Grid.RowProperty, 1);
+                ScaleMap.SetValue(Grid.ColumnSpanProperty, 2);
+                ScaleMap.SetValue(Grid.ZIndexProperty, 1);
+                InnerGrid2.Children.Add(ScaleMap);
+                ScaleMap.SetValue(Grid.BackgroundProperty, palette[5]);
+                ScaleMap.SetValue(Grid.WidthProperty, 240);
+                ScaleMap.SetValue(Grid.HeightProperty, 240);
+                ScaleMap.SetValue(Grid.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                ScaleMap.SetValue(Grid.VerticalAlignmentProperty, VerticalAlignment.Bottom);
+
+                for (int i = 0; i < _rooms[lastMinimapID+1].sizeX*18; i++)
+                {
+                    ScaleMap.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+                }
+                for (int i = 0; i < _rooms[lastMinimapID+1].sizeY*18; i++)
+                {
+                    ScaleMap.RowDefinitions.Add(new(1, GridUnitType.Star));
+                }
+
+                cellsizeX = 240.0/(_rooms[lastMinimapID+1].sizeX*18);
+                cellsizeY = 240.0/(_rooms[lastMinimapID+1].sizeY*18);
+                rot = 0;
+
+                PixelPoint start;
+                PixelPoint end;
+                double scale_x;
+                double scale_y;
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    start = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]),
+                                (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+                    end = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0]),
+                                (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1]));
+                    scale_x = _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0];
+                    scale_y = _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1];
+                }
+                else
+                {
+
+                    start = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordSingle[0][0]),
+                                (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordSingle[0][1]));
+
+                    end = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordSingle[1][0]),
+                                (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordSingle[1][1]));
+                    scale_x = _minimap[lastMinimapID].texScaleSingle[0];
+                    scale_y = _minimap[lastMinimapID].texScaleSingle[1];
+                }
+
+                CroppedBitmap currentImage_ToScale = new();
+                PixelRect currentImageSelection = new(start, end);
+
+                currentImage_ToScale.Source = currentImage;
+                currentImage_ToScale.SourceRect = currentImageSelection;
+;
+
+                currentRoom = new();
+                _minimapMenu.CurrentTileScale = currentRoom;
+                /*
+                Works how we want, but doesn't accept floats.
+                Might not be a problem, floats may only be used due to variable resolution issues
+                */
+                currentRoom.SetValue(Grid.RowProperty, 0);
+                currentRoom.SetValue(Grid.ColumnProperty, 0);
+                currentRoom.SetValue(Grid.RowSpanProperty, (int)Math.Floor(scale_y-1));
+                currentRoom.SetValue(Grid.ColumnSpanProperty, (int)Math.Floor(scale_x-1));
+                currentRoom.SetValue(Image.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                currentRoom.SetValue(Image.VerticalAlignmentProperty, VerticalAlignment.Top);
+                currentRoom.SetValue(Image.SourceProperty, currentImage_ToScale);
+                currentRoom.SetValue(Image.StretchProperty, Stretch.Fill);
+
+                currentRoom.SetValue(Image.RenderTransformOriginProperty, RelativePoint.TopLeft);
+                Matrix renderTransform = Matrix.Identity,
+                    rotation = Matrix.CreateRotation(rot),
+                    translation = Matrix.CreateTranslation(new Vector(0*cellsizeX, 0*cellsizeY)),
+                    scale = Matrix.CreateScale(1, 1);
+                renderTransform *= rotation;
+                renderTransform *= translation;
+                renderTransform *= scale;
+
+                currentRoom.SetValue(Image.RenderTransformProperty, new MatrixTransform(renderTransform));
+
+                ScaleMap.Children.Add(currentRoom);
+
+                Button rotate = new();
+                rotate.Click += RotateScaleImage;
+                _minimapMenu.RotateScale = rotate;
+                rotate.SetValue(Grid.RowProperty, 0);
+                rotate.SetValue(Grid.ColumnProperty, 1);
+                rotate.SetValue(ToggleButton.MarginProperty, Thickness.Parse("5 10"));
+                rotate.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Center);
+                rotate.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                rotate.SetValue(ToggleButton.ContentProperty, "Rotate");
+                InnerGrid2.Children.Add(rotate);
+
+
+                ToggleButton sizediff = new();
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    sizediff.IsChecked = _minimap[lastMinimapID].multiOrientBased[lastMinimapNameID];
+                }
+                else
+                {
+                    sizediff.IsChecked = _minimap[lastMinimapID].singleOrientBased;
+                }
+                _minimapMenu.UnevenSizeSplit = sizediff;
+                sizediff.IsCheckedChanged += ToggleOrientationSettings;
+                sizediff.SetValue(Grid.RowProperty, 0);
+                sizediff.SetValue(Grid.ColumnProperty, 0);
+                sizediff.SetValue(ToggleButton.MarginProperty, Thickness.Parse("5 10"));
+                sizediff.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Center);
+                sizediff.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                sizediff.SetValue(ToggleButton.ContentProperty, "Rotate Scale");
+                InnerGrid2.Children.Add(sizediff);
+
+                MinimapTileSelector = new();
+                _minimapMenu.MinimapScaleX = MinimapTileSelector;
+                MinimapTileSelector.ValueChanged+=ChangeMinimapScale;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 2);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)scale_x);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, (18*_rooms[lastMinimapID+1].sizeX)+1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 14);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("5 10"));
+                InnerGrid2.Children.Add(MinimapTileSelector);
+
+                MinimapTileSelector = new();
+                _minimapMenu.MinimapScaleY = MinimapTileSelector;
+                MinimapTileSelector.ValueChanged+=ChangeMinimapScale;
+                MinimapTileSelector.SetValue(Grid.RowProperty, 2);
+                MinimapTileSelector.SetValue(Grid.ColumnProperty, 1);
+                MinimapTileSelector.SetValue(NumericUpDown.ValueProperty, (decimal)scale_y);
+                MinimapTileSelector.SetValue(NumericUpDown.MinimumProperty, 0);
+                MinimapTileSelector.SetValue(NumericUpDown.MaximumProperty, (18*_rooms[lastMinimapID+1].sizeY)+1);
+                MinimapTileSelector.SetValue(NumericUpDown.ShowButtonSpinnerProperty, false);
+                MinimapTileSelector.SetValue(NumericUpDown.FontSizeProperty, 14);
+                MinimapTileSelector.SetValue(NumericUpDown.TextAlignmentProperty, TextAlignment.Center);
+                MinimapTileSelector.SetValue(NumericUpDown.MarginProperty, Thickness.Parse("5 10"));
+                InnerGrid2.Children.Add(MinimapTileSelector);
 
             }
             else
@@ -2154,7 +2631,7 @@ namespace DungeonBuilder
 
             Border ItemOutline = new();
             ItemOutline.SetValue(Grid.RowProperty, 4);
-            ItemOutline.SetValue(Border.BackgroundProperty, BrushColor.ConvertFrom("#6A966E"));
+            ItemOutline.SetValue(Border.BackgroundProperty, palette[3]);
             ItemOutline.SetValue(Border.MarginProperty, Avalonia.Thickness.Parse("15"));
             ItemOutline.SetValue(Border.CornerRadiusProperty, CornerRadius.Parse("4"));
             ActiveGrid.Children.Add(ItemOutline);
@@ -2183,7 +2660,6 @@ namespace DungeonBuilder
             _roomDataMenu.RoomTiles =  _roomDataMenu.RoomTiles;
             MapTile panel;
             ToggleButton Toggle;
-            Avalonia.Media.BrushConverter bgColor = new();
             _roomDataMenu.RoomTiles.Children.Clear();
             for (int i = 0; i < 2*_rooms[lastRoomDataID].sizeY-1; i++)
             {
@@ -2199,8 +2675,8 @@ namespace DungeonBuilder
 
 
                         Toggle = new();
-                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Top);
+                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Top);
                         Toggle.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("20, 0, 20, 10"));
                         Toggle.SetValue(ToggleButton.HeightProperty, 10);
                         Toggle.SetValue(ToggleButton.NameProperty, "Up");
@@ -2210,8 +2686,8 @@ namespace DungeonBuilder
 
 
                         Toggle = new();
-                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Left);
-                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
+                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Stretch);
                         Toggle.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("0, 20, 10, 20"));
                         Toggle.SetValue(ToggleButton.WidthProperty, 10);
                         Toggle.SetValue(ToggleButton.NameProperty, "Left");
@@ -2220,8 +2696,8 @@ namespace DungeonBuilder
                         panel.Children.Add(Toggle);
 
                         Toggle = new();
-                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Bottom);
+                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Bottom);
                         Toggle.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("20, 10, 20, 0"));
                         Toggle.SetValue(ToggleButton.HeightProperty, 10);
                         Toggle.SetValue(ToggleButton.NameProperty, "Down");
@@ -2230,8 +2706,8 @@ namespace DungeonBuilder
                         panel.Children.Add(Toggle);
 
                         Toggle = new();
-                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Right);
-                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
+                        Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Right);
+                        Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Stretch);
                         Toggle.SetValue(ToggleButton.MarginProperty, Avalonia.Thickness.Parse("10, 20, 0, 20"));
                         Toggle.SetValue(ToggleButton.WidthProperty, 10);
                         Toggle.SetValue(ToggleButton.NameProperty, "Right");
@@ -2247,11 +2723,11 @@ namespace DungeonBuilder
                         {
                             Int32 color = 0xFFFFFF / 16;
                             color = color * (panel.value);
-                            panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (colors[panel.value].ToString("X").PadLeft(6))));
+                            panel.SetValue(MapTile.BackgroundProperty, Brush.Parse("#" + (tile_colors[panel.value].ToString("X").PadLeft(6))));
                         }
                         else
                         {
-                            panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#FFFFFF"));
+                            panel.SetValue(MapTile.BackgroundProperty, Brush.Parse("#FFFFFF"));
                         }
                         _roomDataMenu.RoomTiles.Children.Add(panel);
                     }
@@ -2262,8 +2738,8 @@ namespace DungeonBuilder
                         Toggle.SetValue(Grid.RowProperty, i);
                         if ( (j % 2 == 1 && i % 2 == 0) )
                         {
-                            Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Center);
-                            Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Stretch);
+                            Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                            Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Stretch);
 
 
                             var val1 = (_rooms[lastRoomDataID].connectionValues[i/2][(j-1)/2] >> 0x8);
@@ -2279,8 +2755,8 @@ namespace DungeonBuilder
                         {
 
 
-                            Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch);
-                            Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, Avalonia.Layout.VerticalAlignment.Center);
+                            Toggle.SetValue(ToggleButton.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+                            Toggle.SetValue(ToggleButton.VerticalAlignmentProperty, VerticalAlignment.Center);
 
                             var val1 = (_rooms[lastRoomDataID].connectionValues[(i-1)/2][j/2] >> 0x8);
                             var val2 = (_rooms[lastRoomDataID].connectionValues[(i+1)/2][j/2] >> 0x8);
@@ -2545,6 +3021,11 @@ namespace DungeonBuilder
         }
         private void ChangeEncounterTableData(object? sender, EventArgs e)
         {
+            if (sender == _encounterTableMenu.IsRainy)
+            {
+                UpdateEncounterTableDisplay();
+                return;
+            }
 
             uint value;
             try
@@ -2556,11 +3037,7 @@ namespace DungeonBuilder
                 value = 0;
             }
 
-            if (sender == _encounterTableMenu.IsRainy)
-            {
-                UpdateEncounterTableDisplay();
-            }
-            else if (sender ==  _encounterTableMenu.NormalWeight)
+            if (sender ==  _encounterTableMenu.NormalWeight)
             {
                 if (_encounterTableMenu.IsRainy.IsChecked == true)
                 {
@@ -2976,7 +3453,6 @@ namespace DungeonBuilder
                         }
                     }
                     _rooms[lastRoomDataID].sizeX = (byte)_roomDataMenu.SizeX.Value;
-                    
                     SetupRoomTileView();
                 }
             }
@@ -3051,6 +3527,28 @@ namespace DungeonBuilder
                 NewRoom.ID = (byte)_rooms.Count;
                 _rooms.Add(NewRoom);
                 _roomDataMenu.RoomID.SetValue(NumericUpDown.MaximumProperty, _rooms.Count-1);
+
+                // Also need to add appropriate minimap data
+                DungeonMinimap NewMap = new();
+                NewMap.roomID = (byte)_rooms.Count-1;
+                NewMap.name = $"smap{NewMap.roomID.ToString("D2")}.tmx";
+                NewMap.multipleNames = false;
+                NewMap.texCoordSingle = new List<List<float>>();
+                List<float> intermediate = new();
+                intermediate.Add(0.0f);
+                intermediate.Add(0.0f);
+                NewMap.texCoordSingle.Add(intermediate);
+                intermediate = new();
+                intermediate.Add(1.0f);
+                intermediate.Add(1.0f);
+                NewMap.texCoordSingle.Add(intermediate);
+                NewMap.texScaleSingle = new() { 19.0f, 19.0f };
+
+
+                NewMap.singleOrientBased = false;
+                Bitmap defaultBitmap = new Bitmap(AssetLoader.Open(new Uri("avares://P4G-Dungeon-Editor/Assets/minimap_tiles/smap00.png")));
+                _minimapTiles.Add(NewMap.name, defaultBitmap);
+                _minimap.Add(NewMap);
             }
             else
             {
@@ -3243,17 +3741,108 @@ namespace DungeonBuilder
                 panel.value = (byte)((newval) % 16);
             }
             _rooms[lastRoomDataID].revealProperties[x][y] = (byte)(panel.value << 4);
-            Avalonia.Media.BrushConverter bgColor = new();
             if (panel.value > 0)
             {
-
                 Int32 color = 0xFFFFFF / 16;
                 color = color * panel.value;
-                panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#" + (colors[panel.value].ToString("X").PadLeft(6))));
+                panel.SetValue(MapTile.BackgroundProperty, Brush.Parse("#" + (tile_colors[panel.value].ToString("X").PadLeft(6))));
             }
             else
             {
-                panel.SetValue(MapTile.BackgroundProperty, bgColor.ConvertFrom("#FFFFFF") );
+                panel.SetValue(MapTile.BackgroundProperty, Brush.Parse("#FFFFFF") );
+            }
+
+            int sum = 0;
+            int uniqueNums = 0;
+            List<byte> seen = new();
+            foreach (List<byte> row in _rooms[lastRoomDataID].revealProperties )
+            {
+                foreach (byte value in row)
+                {
+                    sum += value;
+                    if (value != 0 && !seen.Contains(value))
+                    {
+                        seen.Add(value);
+                    }
+                }
+            }
+            seen.Sort();
+            if (sum > 0)
+            {
+                _minimap[lastRoomDataID-1].multipleNames = true;
+
+                if (_minimap[lastRoomDataID-1].names == null)
+                    _minimap[lastRoomDataID-1].names = new();
+
+                _minimap[lastRoomDataID-1].texCoordMulti = new();
+                _minimap[lastRoomDataID-1].texScaleMulti = new();
+                _minimap[lastRoomDataID-1].multiOrientBased = new();
+
+                string original_name = _minimap[lastRoomDataID-1].name;
+                int i = 1;
+                int max_reveal_x = _rooms[lastRoomDataID].revealProperties.Count, 
+                    max_reveal_y = _rooms[lastRoomDataID].revealProperties[0].Count;
+                foreach (byte value in seen)
+                {
+                    int reveal_near_x = -1, reveal_near_y = -1;
+                    int reveal_far_x = -1, reveal_far_y = -1;
+                    int size_x = 0, size_y = 0;
+
+                    string new_name = original_name.Split('.')[0] + "_" + i.ToString("D2") +".tmx";
+                    if (!_minimap[lastRoomDataID-1].names.Contains(new_name))
+                    {
+                        _minimap[lastRoomDataID-1].names.Add(new_name);
+                        Bitmap defaultBitmap = new Bitmap(AssetLoader.Open(new Uri("avares://P4G-Dungeon-Editor/Assets/minimap_tiles/smap00.png")));
+                        _minimapTiles.Add(new_name, defaultBitmap);
+                    }
+                    for (int j = 0; j < _rooms[lastRoomDataID].revealProperties.Count; j++)
+                    {
+                        for (int k = 0; k < _rooms[lastRoomDataID].revealProperties[j].Count; k++)
+                        {
+                            if (_rooms[lastRoomDataID].revealProperties[j][k] == value)
+                            {
+                                if (reveal_far_x == -1 || reveal_far_x < k)
+                                {
+                                    reveal_far_x = k;
+                                }
+                                if (reveal_far_y == -1 || reveal_far_y < j)
+                                {
+                                    reveal_far_y = j;
+                                }
+                                if (reveal_near_x == -1 || reveal_near_x > k)
+                                {
+                                    reveal_near_x = k;
+                                }
+                                if (reveal_near_y == -1 || reveal_near_y > j)
+                                {
+                                    reveal_near_y = j;
+                                }
+                            }
+                        }
+                    }
+
+                    size_x = reveal_far_x - reveal_near_x + 1;
+                    size_y = reveal_far_y - reveal_near_y + 1;
+                    List<List<float>> new_coord = new() { new() { (0.0f), (0.0f) },
+                                                          new() { (1.0f*size_x)/(max_reveal_x), (1.0f*size_y)/(max_reveal_y) }};
+                    List<float> new_scale = new() { (size_x*18.0f+1), (size_y*18.0f+1) };
+                    _minimap[lastRoomDataID-1].texCoordMulti.Add(new_coord);
+                    _minimap[lastRoomDataID-1].texScaleMulti.Add(new_scale);
+                    _minimap[lastRoomDataID-1].multiOrientBased.Add(size_x != size_y);
+                    i++;
+                }
+            }
+            else
+            {
+                _minimap[lastRoomDataID-1].multipleNames = false;
+                foreach (string name in _minimap[lastRoomDataID-1].names)
+                { 
+                    _minimapTiles.Remove(name);
+                }
+                _minimap[lastRoomDataID-1].names = null;
+                _minimap[lastRoomDataID-1].texCoordMulti = null;
+                _minimap[lastRoomDataID-1].texScaleMulti = null;
+                _minimap[lastRoomDataID-1].multiOrientBased = null;
             }
             
         }
@@ -3531,6 +4120,462 @@ namespace DungeonBuilder
             lastTemplateID--;
             _templateMenu.TemplateID.SetValue(NumericUpDown.MaximumProperty, _templates.Count-1);
             _templateMenu.TemplateID.SetValue(NumericUpDown.ValueProperty, lastTemplateID);
+        }
+        private void LoadMinimapSectionOutlines(object? sender, EventArgs e)
+        {
+            if (sender is Image)
+            {
+                Image mapTile = (Image)sender;
+                Panel parent = (Panel)mapTile.Parent;
+                Rectangle test = new();
+                double x = mapTile.Bounds.Right;
+                double y = mapTile.Bounds.Bottom;
+                double selection_width;
+                double selection_height;
+                double offset_x;
+                double offset_y;
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    selection_width = x*((_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0] - _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]));
+                    selection_height = y*((_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1] - _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+
+                    offset_x = x*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0] + mapTile.Bounds.Left;
+                    offset_y = y*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1] + mapTile.Bounds.Top;
+                }
+                else
+                {
+                    selection_width = x*((_minimap[lastMinimapID].texCoordSingle[1][0] - _minimap[lastMinimapID].texCoordSingle[0][0]));
+                    selection_height = y*((_minimap[lastMinimapID].texCoordSingle[1][1] - _minimap[lastMinimapID].texCoordSingle[0][1]));
+
+                    offset_x = x*_minimap[lastMinimapID].texCoordSingle[0][0] + mapTile.Bounds.Left;
+                    offset_y = y*_minimap[lastMinimapID].texCoordSingle[0][1] + mapTile.Bounds.Top;
+
+                }
+                TranslateTransform offset = new(offset_x, offset_y);
+
+
+                test.SetValue(Rectangle.WidthProperty, selection_width);
+                test.SetValue(Rectangle.HeightProperty, selection_height);
+                test.SetValue(Rectangle.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+                test.SetValue(Rectangle.VerticalAlignmentProperty, VerticalAlignment.Top);
+                test.SetValue(Rectangle.RenderTransformProperty, offset);
+                test.SetValue(Rectangle.OpacityProperty, 0.5);
+                test.SetValue(Rectangle.FillProperty, Brush.Parse("#" + (tile_colors[0].ToString("X").PadLeft(6))));
+                test.SetValue(Grid.ZIndexProperty, 1);
+                _minimapMenu.TileTextCoordOutline = test;
+                parent.Children.Add(test);
+
+            }
+        }
+        private void ChangeActiveMinimap(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            if (_minimapMenu.CurrentTileTexCoord == null || _minimapMenu.CurrentTileScale == null)
+            {
+                return;
+            }
+            NumericUpDown MinimapPage = sender as NumericUpDown;
+            lastMinimapID = (int)MinimapPage.Value-1;
+            lastMinimapNameID = 0;
+
+            cellsizeX = 240.0/(_rooms[lastMinimapID+1].sizeX*18);
+            cellsizeY = 240.0/(_rooms[lastMinimapID+1].sizeY*18);
+            rot = 0;
+
+            _minimapMenu.ScaleGridVisual.RowDefinitions.Clear();
+            _minimapMenu.ScaleGridVisual.ColumnDefinitions.Clear();
+            for (int i = 0; i < _rooms[lastMinimapID+1].sizeX; i++)
+            {
+                _minimapMenu.ScaleGridVisual.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+            }
+            for (int i = 0; i < _rooms[lastMinimapID+1].sizeY; i++)
+            {
+                _minimapMenu.ScaleGridVisual.RowDefinitions.Add(new(1, GridUnitType.Star));
+            }
+
+            _minimapMenu.TextureScaleGrid.RowDefinitions.Clear();
+            _minimapMenu.TextureScaleGrid.ColumnDefinitions.Clear();
+            for (int i = 0; i < _rooms[lastMinimapID+1].sizeX*18; i++)
+            {
+                _minimapMenu.TextureScaleGrid.ColumnDefinitions.Add(new(1, GridUnitType.Star));
+            }
+            for (int i = 0; i < _rooms[lastMinimapID+1].sizeY*18; i++)
+            {
+                _minimapMenu.TextureScaleGrid.RowDefinitions.Add(new(1, GridUnitType.Star));
+            };
+
+            if (_minimap[lastMinimapID].multipleNames)
+            {
+                _minimapMenu.MinimapTileNameSelection.SetValue(NumericUpDown.IsEnabledProperty, true);
+                _minimapMenu.MinimapTileNameSelection.SetValue(NumericUpDown.MaximumProperty, _minimap[lastMinimapID].names.Count-1);
+ 
+
+                // Should only ever be called by rooms with multiple names associated with it
+                Bitmap newTile;
+                string name;
+                if (_minimapTiles.TryGetValue(_minimap[lastMinimapID].names[lastMinimapNameID], out newTile))
+                {
+                    _minimapMenu.CurrentTileTexCoord.Source = newTile;
+
+                    PixelPoint start;
+                    PixelPoint end;
+
+                    start = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+                    end = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1]));
+
+                    CroppedBitmap newTile_ToScale = new();
+                    PixelRect currentImageSelection = new(start, end);
+                    newTile_ToScale.Source = newTile;
+                    newTile_ToScale.SourceRect = currentImageSelection;
+                    _minimapMenu.CurrentTileScale.SetValue(Image.SourceProperty, newTile_ToScale);
+
+                    _minimapMenu.MinimapTexCoordStartX.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0];
+                    _minimapMenu.MinimapTexCoordStartY.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1];
+                    _minimapMenu.MinimapTexCoordEndX.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0];
+                    _minimapMenu.MinimapTexCoordEndY.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1];
+
+                    _minimapMenu.MinimapScaleX.Value = (decimal)_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0];
+                    _minimapMenu.MinimapScaleY.Value = (decimal)_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1];
+
+
+                    _minimapMenu.CurrentTileScale.SetValue(Grid.RowSpanProperty, (int)Math.Floor(_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1]-1));
+                    _minimapMenu.CurrentTileScale.SetValue(Grid.ColumnSpanProperty, (int)Math.Floor(_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0]-1));
+
+                    _minimapMenu.UnevenSizeSplit.IsChecked = _minimap[lastMinimapID].multiOrientBased[lastMinimapNameID];
+                }
+
+            }
+            else
+            {
+                _minimapMenu.MinimapTileNameSelection.SetValue(NumericUpDown.IsEnabledProperty, false);
+
+                // Should only ever be called by rooms with multiple names associated with it
+                NumericUpDown numericUpDown = sender as NumericUpDown;
+                Bitmap newTile;
+                string name;
+                if (_minimapTiles.TryGetValue(_minimap[lastMinimapID].name, out newTile))
+                {
+                    _minimapMenu.CurrentTileTexCoord.Source = newTile;
+
+                    PixelPoint start;
+                    PixelPoint end;
+
+                    start = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordSingle[0][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordSingle[0][1]));
+
+                    end = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordSingle[1][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordSingle[1][1]));
+
+                    CroppedBitmap newTile_ToScale = new();
+                    PixelRect currentImageSelection = new(start, end);
+                    newTile_ToScale.Source = newTile;
+                    newTile_ToScale.SourceRect = currentImageSelection;
+                    _minimapMenu.CurrentTileScale.Source = newTile_ToScale;
+
+                    _minimapMenu.MinimapTexCoordStartX.Value = (decimal)_minimap[lastMinimapID].texCoordSingle[0][0];
+                    _minimapMenu.MinimapTexCoordStartY.Value = (decimal)_minimap[lastMinimapID].texCoordSingle[0][1];
+                    _minimapMenu.MinimapTexCoordEndX.Value = (decimal)_minimap[lastMinimapID].texCoordSingle[1][0];
+                    _minimapMenu.MinimapTexCoordEndY.Value = (decimal)_minimap[lastMinimapID].texCoordSingle[1][1];
+                    _minimapMenu.MinimapScaleX.Value = (decimal)_minimap[lastMinimapID].texScaleSingle[0];
+                    _minimapMenu.MinimapScaleY.Value = (decimal)_minimap[lastMinimapID].texScaleSingle[1];
+
+
+                    _minimapMenu.CurrentTileScale.SetValue(Grid.RowSpanProperty, (int)Math.Floor(_minimap[lastMinimapID].texScaleSingle[1]));
+                    _minimapMenu.CurrentTileScale.SetValue(Grid.ColumnSpanProperty, (int)Math.Floor(_minimap[lastMinimapID].texScaleSingle[0]));
+                    _minimapMenu.UnevenSizeSplit.IsChecked = _minimap[lastMinimapID].singleOrientBased;
+                }
+
+            }
+            _minimapMenu.MinimapTileNameSelection.SetValue(NumericUpDown.ValueProperty, lastMinimapNameID);
+        }
+        private void ToggleOrientationSettings(object? sender, EventArgs e)
+        {
+            ToggleButton button = sender as ToggleButton;
+            if (_minimap[lastMinimapID].multipleNames)
+            {
+                _minimap[lastMinimapID].multiOrientBased[lastMinimapNameID] = button.IsChecked.Value;
+            }
+            else
+            {
+                _minimap[lastMinimapID].singleOrientBased = button.IsChecked.Value;
+            }
+            RotateScaleImage(sender, null);
+        }
+        private void ChangeMinimapTexCoord(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            Image mapTile = _minimapMenu.CurrentTileTexCoord;
+            if (mapTile.IsLoaded == false || _minimapMenu.CurrentTileScale == null)
+            {
+                return;
+            }
+            if (sender == _minimapMenu.MinimapTexCoordStartX)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0] = (float)_minimapMenu.MinimapTexCoordStartX.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texCoordSingle[0][0] = (float)_minimapMenu.MinimapTexCoordStartX.Value;
+                }
+            }
+            else if (sender == _minimapMenu.MinimapTexCoordStartY)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1] = (float)_minimapMenu.MinimapTexCoordStartY.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texCoordSingle[0][1] = (float)_minimapMenu.MinimapTexCoordStartY.Value;
+                }
+            }
+            else if (sender == _minimapMenu.MinimapTexCoordEndX)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0] = (float)_minimapMenu.MinimapTexCoordEndX.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texCoordSingle[1][0] = (float)_minimapMenu.MinimapTexCoordEndX.Value;
+                }
+            }
+            else if (sender == _minimapMenu.MinimapTexCoordEndY)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1] = (float)_minimapMenu.MinimapTexCoordEndY.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texCoordSingle[1][1] = (float)_minimapMenu.MinimapTexCoordEndY.Value;
+                }
+            }
+            double x = mapTile.Bounds.Right;
+            double y = mapTile.Bounds.Bottom;
+            double selection_width;
+            double selection_height;
+            double offset_x;
+            double offset_y;
+            if (_minimap[lastMinimapID].multipleNames)
+            {
+                selection_width = x*((_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0] - _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]));
+                selection_height = y*((_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1] - _minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+
+                offset_x = x*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0] + mapTile.Bounds.Left;
+                offset_y = y*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1] + mapTile.Bounds.Top;
+            }
+            else
+            {
+                selection_width = x*((_minimap[lastMinimapID].texCoordSingle[1][0] - _minimap[lastMinimapID].texCoordSingle[0][0]));
+                selection_height = y*((_minimap[lastMinimapID].texCoordSingle[1][1] - _minimap[lastMinimapID].texCoordSingle[0][1]));
+
+                offset_x = x*_minimap[lastMinimapID].texCoordSingle[0][0] + mapTile.Bounds.Left;
+                offset_y = y*_minimap[lastMinimapID].texCoordSingle[0][1] + mapTile.Bounds.Top;
+
+            }
+            TranslateTransform offset = new(offset_x, offset_y);
+
+
+            _minimapMenu.TileTextCoordOutline.SetValue(Rectangle.WidthProperty, selection_width);
+            _minimapMenu.TileTextCoordOutline.SetValue(Rectangle.HeightProperty, selection_height);
+            _minimapMenu.TileTextCoordOutline.SetValue(Rectangle.RenderTransformProperty, offset);
+
+
+            // Since the selection for the scale map is drawn from the texture coordinates, gotta re-render
+            CroppedBitmap scale_src = (CroppedBitmap)_minimapMenu.CurrentTileScale.Source;
+            PixelPoint start;
+            PixelPoint end;
+
+            double img_width = mapTile.Source.Size.Width;
+            double img_height = mapTile.Source.Size.Height;
+
+            if (_minimap[lastMinimapID].multipleNames)
+            {
+                start = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]),
+                            (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+                end = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0]),
+                            (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1]));
+            }
+            else
+            {
+
+                start = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordSingle[0][0]),
+                            (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordSingle[0][1]));
+
+                end = new((int)Math.Floor(img_width*_minimap[lastMinimapID].texCoordSingle[1][0]),
+                            (int)Math.Floor(img_height*_minimap[lastMinimapID].texCoordSingle[1][1]));
+            }
+            scale_src.SourceRect = new PixelRect(start, end);
+        }
+        private void ChangeMinimapScale(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            if (_minimapMenu.CurrentTileScale.IsLoaded == false)
+            {
+                return;
+            }
+            NumericUpDown ScaleUpDown = (NumericUpDown)sender;
+            if (sender == _minimapMenu.MinimapScaleX)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0] = (float)ScaleUpDown.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texScaleSingle[0] = (float)ScaleUpDown.Value;
+                }
+            }
+            else if (sender == _minimapMenu.MinimapScaleY)
+            {
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1] = (float)ScaleUpDown.Value;
+                }
+                else
+                {
+                    _minimap[lastMinimapID].texScaleSingle[1] = (float)ScaleUpDown.Value;
+                }
+            }
+
+            double scale_x;
+            double scale_y;
+            if (_minimap[lastMinimapID].multipleNames)
+            {
+                scale_x = _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0];
+                scale_y = _minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1];
+            }
+            else
+            {
+                scale_x = _minimap[lastMinimapID].texScaleSingle[0];
+                scale_y = _minimap[lastMinimapID].texScaleSingle[1];
+            }
+
+            _minimapMenu.CurrentTileScale.SetValue(Grid.RowProperty, 0);
+            _minimapMenu.CurrentTileScale.SetValue(Grid.ColumnProperty, 0);
+            _minimapMenu.CurrentTileScale.SetValue(Grid.RowSpanProperty, (int)Math.Floor(scale_y-1));
+            _minimapMenu.CurrentTileScale.SetValue(Grid.ColumnSpanProperty, (int)Math.Floor(scale_x-1));
+        }
+        private void ChangeMinimapNameID(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            if (_minimapMenu.CurrentTileTexCoord.IsLoaded == false || _minimapMenu.CurrentTileScale == null)
+            {
+                return;
+            }
+
+            // Should only ever be called by rooms with multiple names associated with it
+            NumericUpDown numericUpDown = sender as NumericUpDown;
+            if (!numericUpDown.IsEnabled)
+            {
+                return;
+            }
+            Bitmap newTile;
+            string name;
+            if (_minimapTiles.TryGetValue(_minimap[lastMinimapID].names[(int)numericUpDown.Value], out newTile))
+            {
+                _minimapMenu.CurrentTileTexCoord.Source = newTile;
+                lastMinimapNameID = (int)numericUpDown.Value;
+
+                PixelPoint start;
+                PixelPoint end;
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    start = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+                    end = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1]));
+                }
+                else
+                {
+
+                    start = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1]));
+
+                    end = new((int)Math.Floor(newTile.Size.Width*_minimap[lastMinimapID].texCoordSingle[1][0]),
+                                (int)Math.Floor(newTile.Size.Height*_minimap[lastMinimapID].texCoordSingle[1][1]));
+                }
+
+                CroppedBitmap newTile_ToScale = new();
+                PixelRect currentImageSelection = new(start, end);
+                newTile_ToScale.Source = newTile;
+                newTile_ToScale.SourceRect = currentImageSelection;
+                _minimapMenu.CurrentTileScale.Source = newTile_ToScale;
+
+                _minimapMenu.MinimapTexCoordStartX.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][0];
+                _minimapMenu.MinimapTexCoordStartY.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][0][1];
+                _minimapMenu.MinimapTexCoordEndX.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][0];
+                _minimapMenu.MinimapTexCoordEndY.Value = (decimal)_minimap[lastMinimapID].texCoordMulti[lastMinimapNameID][1][1];
+                _minimapMenu.MinimapScaleX.Value = (decimal)_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][0];
+                _minimapMenu.MinimapScaleY.Value = (decimal)_minimap[lastMinimapID].texScaleMulti[lastMinimapNameID][1];
+
+            }
+        }
+        private void RotateScaleImage(object? sender, EventArgs e)
+        {
+            int useCellY = 0;
+            int useCellX = 0;
+            if (sender != _minimapMenu.UnevenSizeSplit)
+            {
+                rot++;
+            }
+            rot = rot % 4;
+            if (rot > 1)
+            {
+                useCellY++;
+            }
+            if (0 < rot && rot < 3)
+            {
+                useCellX++;
+            }
+            Matrix renderTransform = Matrix.Identity,
+                rotation = Matrix.CreateRotation(Math.PI*rot/2),
+                translation = Matrix.CreateTranslation(new Vector((18*_rooms[lastMinimapID+1].sizeX)*cellsizeX*useCellX, 
+                                                                  (18*_rooms[lastMinimapID+1].sizeY)*cellsizeY*useCellY)),
+                scale = Matrix.CreateScale(1, 1);
+            renderTransform *= rotation;
+            renderTransform *= translation;
+            renderTransform *= scale;
+
+            _minimapMenu.CurrentTileScale.SetValue(Image.RenderTransformProperty, new MatrixTransform(renderTransform));
+            if (_minimapMenu.UnevenSizeSplit.IsChecked == false && sender != _minimapMenu.UnevenSizeSplit)
+            {
+                // If this is not set, then the arrangement on the minimap will not be rotated
+                int temporary = _minimapMenu.CurrentTileScale.GetValue(Grid.ColumnSpanProperty);
+                _minimapMenu.CurrentTileScale.SetValue(Grid.ColumnSpanProperty, _minimapMenu.CurrentTileScale.GetValue(Grid.RowSpanProperty));
+                _minimapMenu.CurrentTileScale.SetValue(Grid.RowSpanProperty, temporary);
+            }
+
+        }
+        private async void LoadNewMinimapImage(object? sender, EventArgs e)
+        {
+            var file = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Select image to load",
+                AllowMultiple=false,
+                FileTypeFilter = new[] { MinimapTile }
+            });
+
+            if (file.Count > 0)
+            {
+                string name;
+                if (_minimap[lastMinimapID].multipleNames)
+                {
+                    name = _minimap[lastMinimapID].names[lastMinimapNameID];
+                }
+                else
+                {
+                    name = _minimap[lastMinimapID].name;
+                }
+                await using var stream = await file[0].OpenReadAsync();
+                Bitmap currentImage = new Bitmap(stream);
+                _minimapTiles[name] = currentImage;
+
+                // An ad hoc way to refresh the selected image, but it works
+                ChangeActiveMinimap(_minimapMenu.MinimapID, null);
+            }
+
         }
     }
 }

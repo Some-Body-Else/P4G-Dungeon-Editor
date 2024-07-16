@@ -1,11 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+	<OutputType>WinExe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+	<!-- Used for debugging, commenting out here just so I don't forget how to have a window to feed console output to-->
+	<!-- remember to change from WinExe to Exe when using console-->
+	<!--  <DisableWinExeOutputInference>true</DisableWinExeOutputInference> -->
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugType>embedded</DebugType>
@@ -22,6 +25,7 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.0.11" />
     <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
     <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.0.11" />
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
 	<ItemGroup>
@@ -36,6 +40,11 @@
 
 	<ItemGroup>
 	  <Compile Remove="MainWindow.axaml_BACKUP.cs" />
+	</ItemGroup>
+
+
+	<ItemGroup>
+	  <None Remove="Assets\minimap_tiles\smap01.png" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -73,39 +73,47 @@
 				<ColumnDefinition Width="*"></ColumnDefinition>
 			</Grid.ColumnDefinitions>
 
-			<ScrollViewer Grid.Column="0">
-				<StackPanel Background="#FFF921">
+			<Border Grid.Column="0" BorderThickness="3" BorderBrush="#FFEB18">
+				<ScrollViewer>
+					<StackPanel Background="#FFF921">
 
-					<RadioButton Name="EncounterButton" Content="Encounters" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="0"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
+						<RadioButton Name="EncounterButton" Content="Encounters" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="0"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
 
-					<RadioButton Name="EncounterTableButton" Content="Encounter Tables" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="1"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
+						<RadioButton Name="EncounterTableButton" Content="Encounter Tables" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="1"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
 
-					<RadioButton Name="LootTableButton" Content="Loot Tables" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="2"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
+						<RadioButton Name="LootTableButton" Content="Loot Tables" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="2"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
 
-					<RadioButton Name="RoomModelButton" Content="Room Models" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="3" IsEnabled="False"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
+						<RadioButton Name="RoomModelButton" Content="Room Models" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="3" IsEnabled="False"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
 
-					<RadioButton Name="RoomDataButton" Content="Room Data" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="4"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
-					<RadioButton Name="FloorButton" Content="Floors" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="5"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
+						<RadioButton Name="RoomDataButton" Content="Room Data" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="4"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
 
-					<RadioButton Name="TemplateButton" Content="Templates" HorizontalAlignment="Stretch"
-								 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="6"
-								 Click="HandleAreaRadioButtonClick"></RadioButton>
-				</StackPanel>
-			</ScrollViewer>
+						<RadioButton Name="MinimapButton" Content="Minimap Data" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="4"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+
+						<RadioButton Name="FloorButton" Content="Floors" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="5"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
+
+						<RadioButton Name="TemplateButton" Content="Templates" HorizontalAlignment="Stretch"
+									 VerticalAlignment="Stretch" Classes="FullButton" GroupName="ModType" Grid.Row="6"
+									 Click="HandleAreaRadioButtonClick"></RadioButton>
+					</StackPanel>
+				</ScrollViewer>
+			</Border>
 			
-			<Grid Name="ActiveGrid" Grid.Column="1"  Background="#404040">
+			<Grid Name="ActiveGrid" Grid.Column="1"  Background="#3D3D3D">
 				<TextBlock VerticalAlignment="Center" HorizontalAlignment="Center">
 					Create a new project or load one, then select a window.
 				</TextBlock>

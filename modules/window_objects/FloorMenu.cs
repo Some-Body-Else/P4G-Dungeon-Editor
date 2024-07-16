@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace DungeonBuilder.modules.menu_objects
+namespace DungeonBuilder.modules.window_objects
 {
     public class FloorMenu
     {
